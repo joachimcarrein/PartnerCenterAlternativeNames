@@ -1,0 +1,37 @@
+{
+  "manifest_version": 3,
+  "name": "Partner Center Alternative Names",
+  "version": "2.0.1",
+  "description": "Adds an editable Alternative Name column to the Microsoft Partner Center Granular Administration customer list.",
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "permissions": ["storage"],
+  "host_permissions": [
+    "https://partner.microsoft.com/*",
+    "https://api.partnercenter.microsoft.com/*",
+    "https://api.partnercustomersecurity.microsoft.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://partner.microsoft.com/dashboard/v2/customers/granularadminaccess/*"
+      ],
+      "js": ["search-inject.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://partner.microsoft.com/dashboard/v2/customers/granularadminaccess/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

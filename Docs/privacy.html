@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Privacy Policy — Partner Center Alternative Names</title>
+  <meta name="robots" content="index, follow">
+  <style>
+    :root { color-scheme: light dark; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      line-height: 1.65;
+      max-width: 780px;
+      margin: 0 auto;
+      padding: 2.5rem 1.25rem 4rem;
+      color: #1a1a1a;
+      background: #fff;
+    }
+    h1 { font-size: 1.9rem; line-height: 1.25; margin-bottom: .25rem; }
+    h2 { font-size: 1.25rem; margin-top: 2.2rem; border-bottom: 1px solid #e5e5e5; padding-bottom: .3rem; }
+    .updated { color: #666; font-size: .95rem; margin-top: 0; }
+    code {
+      background: #f2f2f2; padding: .12em .35em; border-radius: 4px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .9em;
+    }
+    ul { padding-left: 1.3rem; }
+    li { margin: .35rem 0; }
+    a { color: #0b5ed7; }
+    footer { margin-top: 3rem; color: #666; font-size: .9rem; border-top: 1px solid #e5e5e5; padding-top: 1rem; }
+    @media (prefers-color-scheme: dark) {
+      body { color: #e6e6e6; background: #121212; }
+      code { background: #262626; }
+      h2, footer { border-color: #333; }
+      .updated, footer { color: #9a9a9a; }
+      a { color: #6ea8fe; }
+    }
+  </style>
+</head>
+<body>
+  <h1>Privacy Policy — Partner Center Alternative Names</h1>
+  <p class="updated">Last updated: 1 July 2026</p>
+
+  <p>
+    Partner Center Alternative Names (&ldquo;the extension&rdquo;) is a Chrome extension published by
+    iFacto Business Solutions NV. This policy explains exactly what data the extension handles and where
+    it goes. In short: <strong>the extension does not send any data to us or to any third party.</strong>
+    Everything happens inside your own browser and, where needed, directly between your browser and
+    Microsoft&rsquo;s own services.
+  </p>
+
+  <h2>What the extension does</h2>
+  <p>
+    The extension runs on a single Microsoft Partner Center page — the Granular Delegated Admin (GDAP)
+    customer list at <code>https://partner.microsoft.com/dashboard/v2/customers/granularadminaccess/*</code>.
+    On that page it:
+  </p>
+  <ul>
+    <li>Adds one extra read-only column, <strong>&ldquo;Alternative Name&rdquo;</strong>, showing each customer&rsquo;s primary domain (or display name where no domain is available).</li>
+    <li>Lets the signed-in user assign a personal, custom label to a customer.</li>
+    <li>Makes the page&rsquo;s existing search box also match those custom labels.</li>
+  </ul>
+
+  <h2>Data the extension handles</h2>
+  <ul>
+    <li><strong>Customer information shown on the page</strong> — company names, domains, and tenant identifiers. This is business/organizational data that Microsoft already displays to the signed-in administrator. The extension reads it to build the extra column.</li>
+    <li><strong>Microsoft authentication tokens</strong> — short-lived tokens that the Microsoft Partner Center page itself places in the browser&rsquo;s <code>sessionStorage</code>. The extension reads them only at the moment it needs to call a Microsoft API, and uses them solely to authorize those read-only lookups. <strong>The extension never stores these tokens and never transmits them anywhere except to Microsoft&rsquo;s own API endpoints.</strong></li>
+    <li><strong>Your custom labels</strong> — any alternative name you type for a customer.</li>
+  </ul>
+
+  <h2>Where the data goes</h2>
+  <ul>
+    <li><strong>Network requests are made only to Microsoft&rsquo;s own domains:</strong>
+      <code>partner.microsoft.com</code>, <code>api.partnercenter.microsoft.com</code>, and
+      <code>api.partnercustomersecurity.microsoft.com</code>. These are the same first-party services the
+      Partner Center page already uses. The requests are <strong>read-only lookups</strong> to retrieve
+      customer domains and names for display. The extension performs no administrative actions.</li>
+    <li><strong>No data is ever sent to iFacto Business Solutions NV or to any third party.</strong></li>
+    <li>The extension contains <strong>no analytics, no tracking, no advertising, and no remote code.</strong> All of its code is contained within the extension package.</li>
+  </ul>
+
+  <h2>Data storage and retention</h2>
+  <p>The extension uses <code>chrome.storage.local</code>, which keeps data <strong>on your device only</strong>:</p>
+  <ul>
+    <li>A cache of customer domains/names, kept for up to <strong>30 days</strong> to avoid repeating the same Microsoft API calls.</li>
+    <li>Your custom labels, kept until you change or remove them.</li>
+  </ul>
+  <p>This data never leaves your browser. You can remove it at any time by clearing the extension&rsquo;s storage or by uninstalling the extension.</p>
+
+  <h2>Data sharing</h2>
+  <p>
+    We do <strong>not</strong> sell or transfer your data to third parties. We do <strong>not</strong> use or
+    transfer your data for any purpose unrelated to the extension&rsquo;s single purpose. We do
+    <strong>not</strong> use your data to determine creditworthiness or for lending purposes.
+  </p>
+
+  <h2>Permissions</h2>
+  <ul>
+    <li><code>storage</code> — to save the local cache and your custom labels on your device.</li>
+    <li>Host access to <code>partner.microsoft.com</code> and the two Microsoft API domains above — to run on the specific Partner Center page and to look up customer domains/names from Microsoft&rsquo;s own APIs.</li>
+  </ul>
+
+  <h2>Changes to this policy</h2>
+  <p>If this policy changes, the updated version will be published at the same location with a new &ldquo;Last updated&rdquo; date.</p>
+
+  <h2>Contact</h2>
+  <p>For questions about this policy, please open an issue on our GitHub page: <a href="https://github.com/joachimcarrein/PartnerCenterAlternativeNames/issues">github.com/joachimcarrein/PartnerCenterAlternativeNames/issues</a></p>
+
+  <footer>
+    Partner Center Alternative Names is an independent extension and is not affiliated with or endorsed by Microsoft.
+  </footer>
+</body>
+</html>
