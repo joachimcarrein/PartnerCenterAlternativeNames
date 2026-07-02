@@ -6,37 +6,90 @@
   <title>Privacy Policy — Partner Center Alternative Names</title>
   <meta name="robots" content="index, follow">
   <style>
-    :root { color-scheme: light dark; }
+    :root {
+      color-scheme: light dark;
+      --bg: #fff;
+      --text: #1a1a1a;
+      --muted: #666;
+      --border: #e5e5e5;
+      --code-bg: #f2f2f2;
+      --link: #0b5ed7;
+    }
+    :root[data-theme="dark"] {
+      color-scheme: dark;
+      --bg: #121212;
+      --text: #e6e6e6;
+      --muted: #9a9a9a;
+      --border: #333;
+      --code-bg: #262626;
+      --link: #6ea8fe;
+    }
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
       line-height: 1.65;
       max-width: 780px;
       margin: 0 auto;
       padding: 2.5rem 1.25rem 4rem;
-      color: #1a1a1a;
-      background: #fff;
+      color: var(--text);
+      background: var(--bg);
+      transition: color .2s ease, background .2s ease;
     }
     h1 { font-size: 1.9rem; line-height: 1.25; margin-bottom: .25rem; }
-    h2 { font-size: 1.25rem; margin-top: 2.2rem; border-bottom: 1px solid #e5e5e5; padding-bottom: .3rem; }
-    .updated { color: #666; font-size: .95rem; margin-top: 0; }
+    h2 { font-size: 1.25rem; margin-top: 2.2rem; border-bottom: 1px solid var(--border); padding-bottom: .3rem; }
+    .updated { color: var(--muted); font-size: .95rem; margin-top: 0; }
     code {
-      background: #f2f2f2; padding: .12em .35em; border-radius: 4px;
+      background: var(--code-bg); padding: .12em .35em; border-radius: 4px;
       font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .9em;
     }
     ul { padding-left: 1.3rem; }
     li { margin: .35rem 0; }
-    a { color: #0b5ed7; }
-    footer { margin-top: 3rem; color: #666; font-size: .9rem; border-top: 1px solid #e5e5e5; padding-top: 1rem; }
-    @media (prefers-color-scheme: dark) {
-      body { color: #e6e6e6; background: #121212; }
-      code { background: #262626; }
-      h2, footer { border-color: #333; }
-      .updated, footer { color: #9a9a9a; }
-      a { color: #6ea8fe; }
+    a { color: var(--link); }
+    footer { margin-top: 3rem; color: var(--muted); font-size: .9rem; border-top: 1px solid var(--border); padding-top: 1rem; }
+    .theme-toggle {
+      position: fixed;
+      top: 1rem;
+      right: 1rem;
+      display: inline-flex;
+      align-items: center;
+      gap: .4rem;
+      padding: .45rem .7rem;
+      font: inherit;
+      font-size: .9rem;
+      line-height: 1;
+      color: var(--text);
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      cursor: pointer;
+      transition: color .2s ease, background .2s ease, border-color .2s ease;
     }
+    .theme-toggle:hover { border-color: var(--link); }
+    .theme-toggle:focus-visible { outline: 2px solid var(--link); outline-offset: 2px; }
+    .theme-toggle .icon { font-size: 1.05rem; }
+    /* Show the icon/label for the theme you'll switch TO. */
+    .theme-toggle .to-dark { display: inline; }
+    .theme-toggle .to-light { display: none; }
+    :root[data-theme="dark"] .theme-toggle .to-dark { display: none; }
+    :root[data-theme="dark"] .theme-toggle .to-light { display: inline; }
+    @media print { .theme-toggle { display: none; } }
   </style>
+  <script>
+    // Apply the saved/system theme before paint to avoid a flash.
+    (function () {
+      try {
+        var saved = localStorage.getItem("theme");
+        var theme = saved || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+        document.documentElement.setAttribute("data-theme", theme);
+      } catch (e) {}
+    })();
+  </script>
 </head>
 <body>
+  <button type="button" class="theme-toggle" id="theme-toggle" aria-label="Toggle dark and light mode">
+    <span class="to-dark"><span class="icon" aria-hidden="true">&#127769;</span> Dark</span>
+    <span class="to-light"><span class="icon" aria-hidden="true">&#9728;&#65039;</span> Light</span>
+  </button>
+
   <h1>Privacy Policy — Partner Center Alternative Names</h1>
   <p class="updated">Last updated: 1 July 2026</p>
 
@@ -108,5 +161,22 @@
   <footer>
     Partner Center Alternative Names is an independent extension and is not affiliated with or endorsed by Microsoft.
   </footer>
+
+  <script>
+    (function () {
+      var root = document.documentElement;
+      var btn = document.getElementById("theme-toggle");
+      btn.addEventListener("click", function () {
+        var next = root.getAttribute("data-theme") === "dark" ? "light" : "dark";
+        root.setAttribute("data-theme", next);
+        try { localStorage.setItem("theme", next); } catch (e) {}
+      });
+      // Follow the system theme until the user makes an explicit choice.
+      matchMedia("(prefers-color-scheme: dark)").addEventListener("change", function (e) {
+        try { if (localStorage.getItem("theme")) return; } catch (err) {}
+        root.setAttribute("data-theme", e.matches ? "dark" : "light");
+      });
+    })();
+  </script>
 </body>
 </html>
