@@ -13,7 +13,7 @@ Microsoft's GDAP customer list only shows each customer's display name and tenan
 - **Searchable** — typing in Partner Center's search box also matches your custom names, so searching *"Demo Client"* finds the customer even though its Microsoft display name is something else.
 - **Fast** — customer data is fetched once and cached locally for 30 days; the column survives pagination and search without re-fetching.
 - **Portable** — export your labels to a JSON file from the toolbar popup and import them in another browser or profile, either merging with or replacing what's already there.
-- **Self-healing** — rebuild the cached domains/names on demand from the toolbar popup if Microsoft's data changes, without waiting out the 30-day cache. Your custom labels are never affected by a rebuild.
+- **Self-healing** — rebuild the cached domains/names on demand from the toolbar popup if Microsoft's data changes, without waiting out the 30-day cache. Your custom labels are never affected by a rebuild. A separate "Clear local cache" action is also available if you want a full reset, including your custom labels — export first if you want to keep them.
 - **Private** — everything stays in your browser. See the [Privacy Policy](https://joachimcarrein.github.io/PartnerCenterAlternativeNames/privacy.html).
 
 ## How it works
@@ -59,7 +59,7 @@ This produces `dist/partner-center-alternative-names-<version>.zip` containing o
 | `content.js` | Isolated-world content script — column injection, data fetching, caching, editing |
 | `search-inject.js` | `MAIN`-world script — rewrites the search `$filter` to make custom names searchable |
 | `background.js` | Service worker — relays authenticated API calls (bypasses content-script CORS) |
-| `popup.html` / `popup.js` | Toolbar popup — export/import of custom labels, on-demand cache rebuild |
+| `popup.html` / `popup.js` | Toolbar popup — export/import of custom labels, on-demand cache rebuild, full reset |
 | `icons/` | Extension icons |
 | `build.ps1` | Packs the extension into a versioned zip |
 | `.plan/` | Development notes / change history |

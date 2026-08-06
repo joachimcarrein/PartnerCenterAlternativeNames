@@ -30,7 +30,7 @@ Data/flow:
 - `content.js` owns all state (domains, display names, user overrides), injects the column into the grid's Shadow DOM, handles editing, and caches to `chrome.storage.local`.
 - `content.js` cannot fetch the Microsoft APIs directly (CORS blocks MV3 content-script cross-origin fetches), so it relays every API call to `background.js` via `chrome.runtime.sendMessage({ type: 'PC_FETCH', url, headers })`.
 - `search-inject.js` runs in the page's MAIN world so it can patch `XMLHttpRequest`/`fetch`. It rewrites the search request's OData `$filter` to make custom names searchable. It cannot read `chrome.storage`, so `content.js` publishes a small alt-name index to it over `window.postMessage` (marker key `__altnameBridge`).
-- `popup.js` reads/writes `chrome.storage.local` directly (it's an extension page, not a content script) for export/import of `nameOverrides`. For cache rebuild it can only clear the cache keys itself — the Microsoft tokens live in the GDAP page's `sessionStorage`, so it messages `content.js` (`chrome.tabs.sendMessage({ type: 'ALTNAME_REBUILD_CACHE' })`) to do the actual refetch.
+- `popup.js` reads/writes `chrome.storage.local` directly (it's an extension page, not a content script) for export/import of `nameOverrides`. For "Rebuild local cache" it can only clear the cache keys itself — the Microsoft tokens live in the GDAP page's `sessionStorage`, so it messages `content.js` (`chrome.tabs.sendMessage({ type: 'ALTNAME_REBUILD_CACHE' })`) to do the actual refetch. For "Clear local cache" (a separate, deliberately more destructive action that also deletes `nameOverrides`) it calls `chrome.storage.local.clear()` directly and messages `content.js` (`{ type: 'ALTNAME_CLEAR_ALL' }`) only to reset in-memory state for display — no refetch.
 
 ## Non-obvious constraints (read before changing anything)
 
@@ -56,7 +56,9 @@ These were each discovered the hard way; the fixes are load-bearing.
 
 8. **Guard against double injection** by element ID before adding the header or any row cell; the observer fires often.
 
-9. **The popup can't refetch the cache itself.** Rebuilding the domain/display-name cache always needs the page's `sessionStorage` tokens (constraint 4), which only `content.js` can read. So "rebuild" is always a two-step round trip: `popup.js` clears the three cache keys, then messages the GDAP tab to run `rebuildCache()` there. If no GDAP tab is open (or the content script is orphaned by an extension reload), the popup reports "cache cleared, open/refresh the tab" — clearing alone is a valid outcome because `content.js` re-fetches on its next load anyway. **`nameOverrides` must never be included in the cache-clear key list** — it's the one storage key that has no server-side source of truth to rebuild from.
+9. **The popup can't refetch the cache itself.** Rebuilding the domain/display-name cache always needs the page's `sessionStorage` tokens (constraint 4), which only `content.js` can read. So "Rebuild local cache" is always a two-step round trip: `popup.js` clears the three cache keys, then messages the GDAP tab to run `rebuildCache()` there. If no GDAP tab is open (or the content script is orphaned by an extension reload), the popup reports "cache cleared, open/refresh the tab" — clearing alone is a valid outcome because `content.js` re-fetches on its next load anyway. **`nameOverrides` must never be included in that cache-clear key list** — it's the one storage key that has no server-side source of truth to rebuild from.
+
+   This is deliberately distinct from the popup's separate **"Clear local cache"** action, which *is* allowed to delete `nameOverrides`: it calls `chrome.storage.local.clear()` (no key list, wipes everything) after an explicit confirmation naming the override count, then messages the tab (`ALTNAME_CLEAR_ALL`) to reset in-memory state to a blank-install look. It does not trigger a refetch — that's what separates "wipe" from "wipe and rebuild".
 
 ## Storage keys (`chrome.storage.local`)
 
@@ -114,6 +116,6 @@ To test: load unpacked at `chrome://extensions` (Developer mode). After editing 
 | `content.js` | Column injection, Shadow DOM traversal, data fetch/cache, inline editing, alt-name bridge publisher, cache rebuild, popup message handler |
 | `search-inject.js` | MAIN-world `$filter` rewriter that makes custom names searchable |
 | `background.js` | `PC_FETCH` relay for authenticated cross-origin API calls |
-| `popup.html` / `popup.js` | Toolbar popup: export/import `nameOverrides` as JSON, trigger a cache rebuild |
+| `popup.html` / `popup.js` | Toolbar popup: export/import `nameOverrides` as JSON, trigger a cache rebuild, or clear everything |
 | `build.ps1` | Packs the runtime files into a versioned zip |
 | `icons/`, `screenshots/`, `Docs/` | Store/listing assets and hosted privacy policy |

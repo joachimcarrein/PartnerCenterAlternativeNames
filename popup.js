@@ -287,6 +287,41 @@
   }
 
   /* ------------------------------------------------------------------ */
+  /* Clear everything (cache AND custom names)                          */
+  /* ------------------------------------------------------------------ */
+
+  // Deliberately separate from doRebuild(): this is the one action in the
+  // popup that is allowed to delete nameOverrides. It resets the extension
+  // to a blank-install state, on purpose, on explicit user confirmation.
+  function doClearAll() {
+    chrome.storage.local.get([OVERRIDE_KEY], (result) => {
+      const existing = (result && result[OVERRIDE_KEY]) || {};
+      const count = Object.keys(existing).length;
+      const warning =
+        count > 0
+          ? 'Clear ALL local data, including ' + count + ' custom name(s)? ' +
+            'This cannot be undone unless you’ve exported them.'
+          : 'Clear all local data (there are no custom names stored right now)?';
+      if (!window.confirm(warning)) return;
+
+      chrome.storage.local.clear(() => {
+        chrome.tabs.query({ url: GDAP_URL_GLOB }, (tabs) => {
+          const tab = tabs && tabs[0];
+          if (tab) {
+            // Best-effort live reset of an open tab; storage is already wiped
+            // either way, so a missing/orphaned receiver isn't an error here.
+            chrome.tabs.sendMessage(tab.id, { type: 'ALTNAME_CLEAR_ALL' }, () => {
+              void chrome.runtime.lastError;
+            });
+          }
+          setStatus('Cleared all local data. Refresh the Partner Center tab to start fresh.', 'ok');
+          refreshStatus();
+        });
+      });
+    });
+  }
+
+  /* ------------------------------------------------------------------ */
   /* Wiring                                                             */
   /* ------------------------------------------------------------------ */
 
@@ -294,6 +329,7 @@
   document.getElementById('btn-import-merge').addEventListener('click', () => startImport('merge'));
   document.getElementById('btn-import-replace').addEventListener('click', () => startImport('replace'));
   document.getElementById('btn-rebuild').addEventListener('click', doRebuild);
+  document.getElementById('btn-clear-all').addEventListener('click', doClearAll);
 
   refreshStatus();
 })();

@@ -499,14 +499,34 @@
     return { ok, domains: fresh || {}, names: names || {} };
   }
 
-  // Popup message: clear the cache keys there (it can't refetch — the
-  // Microsoft tokens live in this page's sessionStorage), then rebuild here.
+  // Popup messages. ALTNAME_REBUILD_CACHE: popup already cleared the cache
+  // keys (it can't refetch — the Microsoft tokens live in this page's
+  // sessionStorage), so refetch and re-render here. ALTNAME_CLEAR_ALL: popup
+  // already wiped ALL of chrome.storage.local (including nameOverrides, on
+  // purpose, on the user's confirmation) — this just resets in-memory state
+  // to match and shows the blank-install "Loading..." placeholders instead of
+  // stale data until the page is refreshed or Rebuild is used.
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-    if (!msg || msg.type !== 'ALTNAME_REBUILD_CACHE') return; // not ours
-    rebuildCache()
-      .then((r) => sendResponse(r))
-      .catch((e) => sendResponse({ ok: false, error: String((e && e.message) || e) }));
-    return true; // keep the message channel open for the async reply
+    if (!msg) return; // not ours
+    if (msg.type === 'ALTNAME_REBUILD_CACHE') {
+      rebuildCache()
+        .then((r) => sendResponse(r))
+        .catch((e) => sendResponse({ ok: false, error: String((e && e.message) || e) }));
+      return true; // keep the message channel open for the async reply
+    }
+    if (msg.type === 'ALTNAME_CLEAR_ALL') {
+      overrideMap = new Map();
+      domainMap = new Map();
+      displayNameMap = new Map();
+      loadState = 'pending';
+      publishAltIndex();
+      const g = findGrid(document);
+      if (g && g.shadowRoot) injectColumn(g.shadowRoot);
+      dbg('Cleared all local state (storage already wiped by popup).');
+      sendResponse({ ok: true });
+      return;
+    }
+    // not ours
   });
 
   /* ------------------------------------------------------------------ */

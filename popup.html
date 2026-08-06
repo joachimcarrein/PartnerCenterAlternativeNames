@@ -62,6 +62,14 @@
     margin-top: 6px;
     font-size: 11px;
   }
+  .btn-danger {
+    border-color: #d8a7ac;
+    background: #fdf0f1;
+    color: #a4262c;
+  }
+  .btn-danger:hover {
+    background: #f9dcdf;
+  }
   #status {
     min-height: 16px;
     margin-top: 10px;
@@ -92,6 +100,14 @@
       <button id="btn-rebuild" type="button">Rebuild local cache</button>
     </div>
     <div class="caption">Custom names are never affected.</div>
+  </section>
+
+  <section>
+    <h2>Danger zone</h2>
+    <div class="btn-row">
+      <button id="btn-clear-all" type="button" class="btn-danger">Clear local cache</button>
+    </div>
+    <div class="caption">Wipes everything &mdash; cached domains AND your custom names &mdash; back to a blank install. Export first if you want to keep your names.</div>
   </section>
 
   <div id="status"></div>
