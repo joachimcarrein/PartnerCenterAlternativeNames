@@ -12,6 +12,8 @@ Microsoft's GDAP customer list only shows each customer's display name and tenan
 - **Editable labels** — double-click a cell (or use the ✎ button) to give a customer your own custom name. Custom names are highlighted and can be reset to the original with ↺.
 - **Searchable** — typing in Partner Center's search box also matches your custom names, so searching *"Demo Client"* finds the customer even though its Microsoft display name is something else.
 - **Fast** — customer data is fetched once and cached locally for 30 days; the column survives pagination and search without re-fetching.
+- **Portable** — export your labels to a JSON file from the toolbar popup and import them in another browser or profile, either merging with or replacing what's already there.
+- **Self-healing** — rebuild the cached domains/names on demand from the toolbar popup if Microsoft's data changes, without waiting out the 30-day cache. Your custom labels are never affected by a rebuild.
 - **Private** — everything stays in your browser. See the [Privacy Policy](https://joachimcarrein.github.io/PartnerCenterAlternativeNames/privacy.html).
 
 ## How it works
@@ -23,6 +25,8 @@ The customer grid lives inside a Shadow DOM web component, and Partner Center's 
 3. Makes custom names searchable via a `MAIN`-world script (`search-inject.js`) that expands the outgoing OData `$filter` with `OR tenantId eq '…'` clauses for matching customers — so the server returns rows that only a custom name matched.
 
 Custom names and the domain cache are stored in `chrome.storage.local` and never leave the device.
+
+Only your custom names are ever exported — the domain cache isn't, since it's just a copy of what Microsoft's APIs already return and both a normal page load and the popup's "Rebuild local cache" button re-fetch it in seconds.
 
 ## Installation (unpacked / developer mode)
 
@@ -45,16 +49,17 @@ After changing any extension file, click the **reload** (↻) icon on the extens
 ./build.ps1
 ```
 
-This produces `dist/partner-center-alternative-names-<version>.zip` containing only `manifest.json`, `background.js`, `content.js`, `search-inject.js`, and `icons/` — nothing else.
+This produces `dist/partner-center-alternative-names-<version>.zip` containing only `manifest.json`, `background.js`, `content.js`, `search-inject.js`, `popup.html`, `popup.js`, and `icons/` — nothing else.
 
 ## Project structure
 
 | File | Purpose |
 |------|---------|
-| `manifest.json` | MV3 manifest — permissions, host access, content scripts |
+| `manifest.json` | MV3 manifest — permissions, host access, content scripts, toolbar popup |
 | `content.js` | Isolated-world content script — column injection, data fetching, caching, editing |
 | `search-inject.js` | `MAIN`-world script — rewrites the search `$filter` to make custom names searchable |
 | `background.js` | Service worker — relays authenticated API calls (bypasses content-script CORS) |
+| `popup.html` / `popup.js` | Toolbar popup — export/import of custom labels, on-demand cache rebuild |
 | `icons/` | Extension icons |
 | `build.ps1` | Packs the extension into a versioned zip |
 | `.plan/` | Development notes / change history |

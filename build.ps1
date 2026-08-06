@@ -34,6 +34,8 @@ try {
         "background.js",
         "content.js",
         "search-inject.js",
+        "popup.html",
+        "popup.js",
         "icons"
     )
 

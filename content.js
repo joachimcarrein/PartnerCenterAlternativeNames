@@ -183,6 +183,19 @@
     }
   }
 
+  // Picks up overrides written from outside this tab (popup export/import).
+  // The persistOverrides() write above also fires this — a harmless self-echo,
+  // since the map is rebuilt to the value it already holds and renderCell's
+  // data-rendered signature check makes the re-render a no-op.
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== 'local' || !changes[OVERRIDE_KEY]) return;
+    overrideMap = new Map(Object.entries(changes[OVERRIDE_KEY].newValue || {}));
+    dbg('Overrides changed externally:', overrideMap.size, 'entry(ies).');
+    publishAltIndex();
+    const g = findGrid(document);
+    if (g && g.shadowRoot) injectColumn(g.shadowRoot);
+  });
+
   /* ------------------------------------------------------------------ */
   /* Search bridge — publish the alt-name index to the MAIN-world script */
   /* ------------------------------------------------------------------ */
@@ -464,6 +477,37 @@
     publishAltIndex();
     return domainMap.size > 0 || displayNameMap.size > 0;
   }
+
+  // Discards nothing itself — the caller (debug helper or the popup's rebuild
+  // message handler) owns clearing the cache keys first. Refetches domains
+  // and display names from Microsoft and writes them. ok is false only when
+  // BOTH fetches came back empty (e.g. expired tokens); a partial result
+  // (domains but no names, or vice versa) is still reported as a success with
+  // the real counts, so the caller can show exactly what was rebuilt.
+  async function rebuildCache() {
+    const [fresh, names] = await Promise.all([fetchAllDomains(), fetchDisplayNames()]);
+    if (fresh) domainMap = new Map(Object.entries(fresh));
+    if (names) displayNameMap = new Map(Object.entries(names));
+    const ok = !!(fresh || names);
+    if (ok) {
+      writeCache(fresh || {}, names || {});
+      loadState = 'ready';
+      publishAltIndex();
+      const g = findGrid(document);
+      if (g && g.shadowRoot) injectColumn(g.shadowRoot);
+    }
+    return { ok, domains: fresh || {}, names: names || {} };
+  }
+
+  // Popup message: clear the cache keys there (it can't refetch — the
+  // Microsoft tokens live in this page's sessionStorage), then rebuild here.
+  chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+    if (!msg || msg.type !== 'ALTNAME_REBUILD_CACHE') return; // not ours
+    rebuildCache()
+      .then((r) => sendResponse(r))
+      .catch((e) => sendResponse({ ok: false, error: String((e && e.message) || e) }));
+    return true; // keep the message channel open for the async reply
+  });
 
   /* ------------------------------------------------------------------ */
   /* Column injection                                                   */
@@ -765,20 +809,43 @@
         const g = findGrid(document);
         if (g && g.shadowRoot) injectColumn(g.shadowRoot);
       },
-      refetch: async () => {
-        const [fresh, names] = await Promise.all([fetchAllDomains(), fetchDisplayNames()]);
-        if (fresh) domainMap = new Map(Object.entries(fresh));
-        if (names) displayNameMap = new Map(Object.entries(names));
-        if (fresh || names) {
-          writeCache(fresh || {}, names || {});
-          loadState = 'ready';
-          publishAltIndex();
-          const g = findGrid(document);
-          if (g && g.shadowRoot) injectColumn(g.shadowRoot);
-        }
-        return { domains: fresh, names };
-      },
+      rebuildCache,
       getAltIndex: () => buildAltIndex(),
+      exportOverrides: () => {
+        const obj = {};
+        for (const [k, v] of overrideMap) obj[k] = v;
+        return {
+          type: 'partner-center-alternative-names',
+          formatVersion: 1,
+          extensionVersion: chrome.runtime.getManifest().version,
+          exportedAt: new Date().toISOString(),
+          count: overrideMap.size,
+          nameOverrides: obj,
+        };
+      },
+      // Thinner than popup.js's validator (no file-size check — there's no
+      // file here), but the same UUID/string/trim rules. mode is 'merge' or
+      // 'replace'; defaults to 'merge'.
+      importOverrides: (data, mode) => {
+        const raw = data && data.nameOverrides;
+        if (!raw || typeof raw !== 'object') throw new Error('No nameOverrides in data.');
+        const clean = {};
+        for (const [key, value] of Object.entries(raw)) {
+          const id = String(key).toLowerCase();
+          if (!UUID_RE.test(id) || typeof value !== 'string') continue;
+          const trimmed = value.trim();
+          if (!trimmed) continue;
+          clean[id] = trimmed;
+        }
+        const merged =
+          mode === 'replace' ? clean : Object.fromEntries([...overrideMap, ...Object.entries(clean)]);
+        overrideMap = new Map(Object.entries(merged));
+        persistOverrides();
+        publishAltIndex();
+        const g = findGrid(document);
+        if (g && g.shadowRoot) injectColumn(g.shadowRoot);
+        return { imported: Object.keys(clean).length, stored: overrideMap.size };
+      },
     };
 
     // Load user overrides first so the column reflects them on first paint.

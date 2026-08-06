@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Partner Center Alternative Names</title>
+<style>
+  body {
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 13px;
+    width: 320px;
+    margin: 0;
+    padding: 12px 14px 14px;
+    color: #1b1b1b;
+  }
+  h1 {
+    font-size: 13px;
+    font-weight: 600;
+    margin: 0 0 10px;
+  }
+  section {
+    margin-bottom: 14px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid #e1e1e1;
+  }
+  section:last-of-type {
+    border-bottom: none;
+    margin-bottom: 0;
+    padding-bottom: 0;
+  }
+  h2 {
+    font-size: 12px;
+    font-weight: 600;
+    margin: 0 0 6px;
+    color: #444;
+  }
+  .status-line {
+    color: #555;
+    margin-bottom: 8px;
+  }
+  .btn-row {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  button {
+    font: inherit;
+    padding: 5px 10px;
+    border: 1px solid #c8c8c8;
+    background: #f6f6f6;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  button:hover {
+    background: #ececec;
+  }
+  button:disabled {
+    cursor: default;
+    opacity: 0.5;
+  }
+  .caption {
+    color: #767676;
+    margin-top: 6px;
+    font-size: 11px;
+  }
+  #status {
+    min-height: 16px;
+    margin-top: 10px;
+    font-size: 12px;
+  }
+  #status.ok { color: #107c10; }
+  #status.err { color: #a4262c; }
+</style>
+</head>
+<body>
+  <h1>Partner Center Alternative Names</h1>
+
+  <section>
+    <h2>Alternative names</h2>
+    <div class="status-line" id="override-status">Loading&hellip;</div>
+    <div class="btn-row">
+      <button id="btn-export" type="button">Export&hellip;</button>
+      <button id="btn-import-merge" type="button">Import &mdash; merge</button>
+      <button id="btn-import-replace" type="button">Import &mdash; replace all</button>
+    </div>
+    <input type="file" id="file-input" accept="application/json,.json" hidden />
+  </section>
+
+  <section>
+    <h2>Local cache</h2>
+    <div class="status-line" id="cache-status">Loading&hellip;</div>
+    <div class="btn-row">
+      <button id="btn-rebuild" type="button">Rebuild local cache</button>
+    </div>
+    <div class="caption">Custom names are never affected.</div>
+  </section>
+
+  <div id="status"></div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

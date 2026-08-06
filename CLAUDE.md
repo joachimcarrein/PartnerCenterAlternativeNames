@@ -10,25 +10,27 @@ A Manifest V3 Chrome extension that adds an editable **"Alternative Name"** colu
 https://partner.microsoft.com/dashboard/v2/customers/granularadminaccess/*
 ```
 
-For each customer it shows the primary domain (fetched from Microsoft's own APIs), lets the user assign a private custom label, and makes the page's built-in search box also match those labels.
+For each customer it shows the primary domain (fetched from Microsoft's own APIs), lets the user assign a private custom label, and makes the page's built-in search box also match those labels. A toolbar popup (`popup.html`/`popup.js`) lets the user export/import those custom labels as a JSON file and rebuild the local domain cache on demand.
 
 There is **no build step or bundler** — the source files are the shipped files. It is plain, dependency-free ES. `build.ps1` only zips the runtime files for distribution.
 
 ## Architecture
 
-Three execution contexts cooperate:
+Four execution contexts cooperate:
 
 | Context | File | Runs in | Can it use `chrome.*`? |
 |---|---|---|---|
 | Content script | `content.js` | Isolated world (`document_idle`) | Yes |
 | Search interceptor | `search-inject.js` | **MAIN world** (`document_start`) | No |
 | Service worker | `background.js` | Extension worker | Yes |
+| Toolbar popup | `popup.html` / `popup.js` | Extension page (`action.default_popup`) | Yes |
 
 Data/flow:
 
 - `content.js` owns all state (domains, display names, user overrides), injects the column into the grid's Shadow DOM, handles editing, and caches to `chrome.storage.local`.
 - `content.js` cannot fetch the Microsoft APIs directly (CORS blocks MV3 content-script cross-origin fetches), so it relays every API call to `background.js` via `chrome.runtime.sendMessage({ type: 'PC_FETCH', url, headers })`.
 - `search-inject.js` runs in the page's MAIN world so it can patch `XMLHttpRequest`/`fetch`. It rewrites the search request's OData `$filter` to make custom names searchable. It cannot read `chrome.storage`, so `content.js` publishes a small alt-name index to it over `window.postMessage` (marker key `__altnameBridge`).
+- `popup.js` reads/writes `chrome.storage.local` directly (it's an extension page, not a content script) for export/import of `nameOverrides`. For cache rebuild it can only clear the cache keys itself — the Microsoft tokens live in the GDAP page's `sessionStorage`, so it messages `content.js` (`chrome.tabs.sendMessage({ type: 'ALTNAME_REBUILD_CACHE' })`) to do the actual refetch.
 
 ## Non-obvious constraints (read before changing anything)
 
@@ -54,6 +56,8 @@ These were each discovered the hard way; the fixes are load-bearing.
 
 8. **Guard against double injection** by element ID before adding the header or any row cell; the observer fires often.
 
+9. **The popup can't refetch the cache itself.** Rebuilding the domain/display-name cache always needs the page's `sessionStorage` tokens (constraint 4), which only `content.js` can read. So "rebuild" is always a two-step round trip: `popup.js` clears the three cache keys, then messages the GDAP tab to run `rebuildCache()` there. If no GDAP tab is open (or the content script is orphaned by an extension reload), the popup reports "cache cleared, open/refresh the tab" — clearing alone is a valid outcome because `content.js` re-fetches on its next load anyway. **`nameOverrides` must never be included in the cache-clear key list** — it's the one storage key that has no server-side source of truth to rebuild from.
+
 ## Storage keys (`chrome.storage.local`)
 
 | Key | Contents | Expiry |
@@ -65,9 +69,26 @@ These were each discovered the hard way; the fixes are load-bearing.
 
 Tenant IDs are stored **lowercased**. Domains/display names are `.trim()`-ed. When only one part of the cache is missing, refetch just that part (independent tracking lets a failed GDAP fetch self-heal on the next load instead of waiting out the 30-day TTL).
 
+### Export/import file contract (`popup.js`)
+
+Only `nameOverrides` is ever exported — never the domain cache (it's derived, re-fetches in seconds, and would leak real customer domains into a portable file). The file is a JSON envelope:
+
+```json
+{
+  "type": "partner-center-alternative-names",
+  "formatVersion": 1,
+  "extensionVersion": "2.0.2",
+  "exportedAt": "2026-08-06T09:14:22.115Z",
+  "count": 3,
+  "nameOverrides": { "<tenantId>": "<customName>", "…": "…" }
+}
+```
+
+`type` + `formatVersion` gate the import; anything else is refused with a specific message. Per-entry validation (UUID key, non-empty trimmed string value, length cap) skips bad rows without failing the whole import. Import supports **merge** (imported entries win per tenant, everything else untouched) and **replace all** (storage ends up exactly matching the file) — both write `nameOverrides` in a single `chrome.storage.local.set`, never `remove` + `set`, so there's no window where the data is briefly empty. A structurally valid file with zero usable entries is refused in replace mode rather than allowed to wipe everything.
+
 ## Debugging
 
-`content.js` exposes `window._tenantDomainDebug` in the page for DevTools inspection: `getCache()`, `clearCache()`, `getMap()`, `getNameMap()`, `getOverrides()`, `clearOverrides()`, `refetch()`, `getAltIndex()`. Both scripts log under `[AltName]` / `[AltName/net]` when their `DEBUG` flag is on.
+`content.js` exposes `window._tenantDomainDebug` in the page for DevTools inspection: `getCache()`, `clearCache()`, `getMap()`, `getNameMap()`, `getOverrides()`, `clearOverrides()`, `rebuildCache()`, `getAltIndex()`, `exportOverrides()`, `importOverrides(data, mode)`. Both scripts log under `[AltName]` / `[AltName/net]` when their `DEBUG` flag is on.
 
 ## Building & loading
 
@@ -75,7 +96,7 @@ Tenant IDs are stored **lowercased**. Domains/display names are `.trim()`-ed. Wh
 ./build.ps1   # -> dist/partner-center-alternative-names-<version>.zip
 ```
 
-`build.ps1` packs from an **explicit allowlist** (`manifest.json`, `background.js`, `content.js`, `search-inject.js`, `icons/`). Nothing else ships — do not rely on directory sweeps. Bump `version` in `manifest.json` for each release.
+`build.ps1` packs from an **explicit allowlist** (`manifest.json`, `background.js`, `content.js`, `search-inject.js`, `popup.html`, `popup.js`, `icons/`). Nothing else ships — do not rely on directory sweeps. Bump `version` in `manifest.json` for each release.
 
 To test: load unpacked at `chrome://extensions` (Developer mode). After editing any file, click the extension's **reload (↻)** icon, then refresh the Partner Center page — refreshing the page alone runs the old build.
 
@@ -89,9 +110,10 @@ To test: load unpacked at `chrome://extensions` (Developer mode). After editing 
 
 | File | Responsibility |
 |---|---|
-| `manifest.json` | MV3 manifest: `storage` permission, host permissions, two content scripts (isolated + MAIN), background worker |
-| `content.js` | Column injection, Shadow DOM traversal, data fetch/cache, inline editing, alt-name bridge publisher |
+| `manifest.json` | MV3 manifest: `storage` permission, host permissions, two content scripts (isolated + MAIN), background worker, toolbar popup |
+| `content.js` | Column injection, Shadow DOM traversal, data fetch/cache, inline editing, alt-name bridge publisher, cache rebuild, popup message handler |
 | `search-inject.js` | MAIN-world `$filter` rewriter that makes custom names searchable |
 | `background.js` | `PC_FETCH` relay for authenticated cross-origin API calls |
+| `popup.html` / `popup.js` | Toolbar popup: export/import `nameOverrides` as JSON, trigger a cache rebuild |
 | `build.ps1` | Packs the runtime files into a versioned zip |
 | `icons/`, `screenshots/`, `Docs/` | Store/listing assets and hosted privacy policy |
