@@ -26,6 +26,7 @@
   const DISPLAYNAME_KEY = 'displayNameCache';
   const OVERRIDE_KEY = 'nameOverrides'; // user-set custom names; never expires
   const EXPIRY_KEY = 'domainCacheExpiry';
+  const NAV_SETTING_KEY = 'keepDefaultLinkBehaviour'; // default true; see popup.html
   const CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
   const LIST_URL = 'https://api.partnercenter.microsoft.com/v1/customers?size=300';
   const CUSTOMER_URL = 'https://api.partnercenter.microsoft.com/v1/customers/';
@@ -43,6 +44,8 @@
   let overrideMap = new Map();
   // 'pending' until a load attempt finishes; then 'ready' or 'failed'.
   let loadState = 'pending';
+  // true = unchanged default behaviour (name click -> Admin relationships).
+  let keepDefaultLinkBehaviour = true;
 
   /* ------------------------------------------------------------------ */
   /* Shadow DOM traversal                                               */
@@ -168,6 +171,21 @@
     chrome.storage.local.set(payload, () => dbg('Saved', overrideMap.size, 'name override(s).'));
   }
 
+  /* ------------------------------------------------------------------ */
+  /* Settings — "Keep default link behaviour"                          */
+  /* ------------------------------------------------------------------ */
+
+  function loadNavSetting() {
+    return new Promise((resolve) => {
+      chrome.storage.local.get([NAV_SETTING_KEY], (result) => {
+        keepDefaultLinkBehaviour =
+          result && typeof result[NAV_SETTING_KEY] === 'boolean' ? result[NAV_SETTING_KEY] : true;
+        dbg('Keep default link behaviour:', keepDefaultLinkBehaviour);
+        resolve();
+      });
+    });
+  }
+
   function setOverride(tenantId, name) {
     overrideMap.set(String(tenantId).toLowerCase(), name);
     persistOverrides();
@@ -188,12 +206,19 @@
   // since the map is rebuilt to the value it already holds and renderCell's
   // data-rendered signature check makes the re-render a no-op.
   chrome.storage.onChanged.addListener((changes, area) => {
-    if (area !== 'local' || !changes[OVERRIDE_KEY]) return;
-    overrideMap = new Map(Object.entries(changes[OVERRIDE_KEY].newValue || {}));
-    dbg('Overrides changed externally:', overrideMap.size, 'entry(ies).');
-    publishAltIndex();
-    const g = findGrid(document);
-    if (g && g.shadowRoot) injectColumn(g.shadowRoot);
+    if (area !== 'local') return;
+    if (changes[OVERRIDE_KEY]) {
+      overrideMap = new Map(Object.entries(changes[OVERRIDE_KEY].newValue || {}));
+      dbg('Overrides changed externally:', overrideMap.size, 'entry(ies).');
+      publishAltIndex();
+      const g = findGrid(document);
+      if (g && g.shadowRoot) injectColumn(g.shadowRoot);
+    }
+    if (changes[NAV_SETTING_KEY]) {
+      keepDefaultLinkBehaviour =
+        typeof changes[NAV_SETTING_KEY].newValue === 'boolean' ? changes[NAV_SETTING_KEY].newValue : true;
+      dbg('Keep default link behaviour changed externally:', keepDefaultLinkBehaviour);
+    }
   });
 
   /* ------------------------------------------------------------------ */
@@ -241,6 +266,83 @@
     if (e.source !== window || !e.data || e.data[BRIDGE] !== true) return;
     if (e.data.kind === 'REQUEST_INDEX') publishAltIndex();
   });
+
+  /* ------------------------------------------------------------------ */
+  /* Navigation redirect — customer name click                          */
+  /* ------------------------------------------------------------------ */
+  //
+  // Clicking a customer's name button (<customersvcadmin_he-button appearance
+  // ="link"> inside <th id="cell-displayName-{id}">, several shadow roots
+  // deep) is handled entirely by the SPA's own internal click handler and
+  // normally lands on .../adminrelationships. When "Keep default link
+  // behaviour" is off, we want *that specific click* — and only that click —
+  // to land on .../servicemanagementpage instead; the customer detail view's
+  // own left-nav "Admin relationships" link must keep working normally once
+  // the user is already inside a customer. That scoping is why this is a
+  // capture-phase click interception on the button itself, not a global
+  // history.pushState patch (which would also hijack the left-nav link on
+  // every future visit to that route).
+  //
+  // Click events are composed and cross shadow boundaries, so
+  // event.composedPath() sees the actual button element even though it is
+  // nested several shadow roots deep. A capture-phase listener on `document`
+  // fires before the button's own (shadow-scoped) handler, so
+  // stopImmediatePropagation() here reliably blocks the SPA's native
+  // navigation before it starts. tenantId is resolved from the row's own
+  // id="row-{id}" — the same authoritative source injectRows() already uses
+  // — not re-derived from the button/cell markup.
+
+  function findNameButtonClick(path) {
+    let inNameCell = false;
+    let isNameButton = false;
+    let tenantId = null;
+    for (const el of path) {
+      if (!el || !el.tagName) continue;
+      const tag = el.tagName.toLowerCase();
+      if (tag === 'customersvcadmin_he-button') {
+        const appearance = (el.getAttribute && el.getAttribute('appearance')) || '';
+        if (appearance.toLowerCase() === 'link') isNameButton = true;
+      }
+      if (
+        (el.id && el.id.indexOf('cell-displayName-') === 0) ||
+        (el.slot && String(el.slot).indexOf('displayName-') === 0)
+      ) {
+        inNameCell = true;
+      }
+      if (el.id && el.id.indexOf('row-') === 0) {
+        tenantId = el.id.slice('row-'.length);
+      }
+    }
+    if (isNameButton && inNameCell && tenantId && UUID_RE.test(tenantId)) return tenantId;
+    return null;
+  }
+
+  // history.pushState from the isolated world does move the tab's real
+  // location (session-history state isn't tied to a JS world), and a
+  // manually dispatched popstate is observed by the page's own listeners the
+  // same way. If live testing shows the SPA's router doesn't pick this up,
+  // fall back to a hard `location.assign(url)` here instead (full reload,
+  // but still correct).
+  function redirectToServiceManagement(tenantId) {
+    const url = '/dashboard/v2/customers/' + tenantId + '/servicemanagementpage';
+    history.pushState({}, '', url);
+    window.dispatchEvent(new PopStateEvent('popstate', { state: {} }));
+    dbg('Redirected customer-name click to Service management:', tenantId);
+  }
+
+  document.addEventListener(
+    'click',
+    (e) => {
+      if (keepDefaultLinkBehaviour) return; // default behaviour: do nothing
+      const path = typeof e.composedPath === 'function' ? e.composedPath() : [];
+      const tenantId = findNameButtonClick(path);
+      if (!tenantId) return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      redirectToServiceManagement(tenantId);
+    },
+    { capture: true }
+  );
 
   /* ------------------------------------------------------------------ */
   /* API fetch                                                          */
@@ -870,6 +972,7 @@
 
     // Load user overrides first so the column reflects them on first paint.
     await loadOverrides();
+    await loadNavSetting();
     // Push whatever we already know (overrides) to the search interceptor now;
     // domains follow once loadDomainData() resolves below.
     publishAltIndex();

@@ -77,10 +77,28 @@
   }
   #status.ok { color: #107c10; }
   #status.err { color: #a4262c; }
+  .checkbox-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    cursor: pointer;
+  }
+  .checkbox-row input {
+    margin: 2px 0 0;
+  }
 </style>
 </head>
 <body>
   <h1>Partner Center Alternative Names</h1>
+
+  <section>
+    <h2>Customer name click</h2>
+    <label class="checkbox-row">
+      <input type="checkbox" id="chk-keep-default-link" checked />
+      <span>Keep default link behaviour (opens Admin relationships)</span>
+    </label>
+    <div class="caption">When unchecked, clicking a customer's name opens Service management instead.</div>
+  </section>
 
   <section>
     <h2>Alternative names</h2>

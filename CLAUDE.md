@@ -60,6 +60,8 @@ These were each discovered the hard way; the fixes are load-bearing.
 
    This is deliberately distinct from the popup's separate **"Clear local cache"** action, which *is* allowed to delete `nameOverrides`: it calls `chrome.storage.local.clear()` (no key list, wipes everything) after an explicit confirmation naming the override count, then messages the tab (`ALTNAME_CLEAR_ALL`) to reset in-memory state to a blank-install look. It does not trigger a refetch — that's what separates "wipe" from "wipe and rebuild".
 
+10. **The "Keep default link behaviour" redirect is a scoped click interception, not a global `history.pushState` patch.** Clicking a customer's name in the grid (`<customersvcadmin_he-button appearance="link">` inside `cell-displayName-{id}`, several shadow roots deep) normally lands on `.../adminrelationships`; when the setting is off it should land on `.../servicemanagementpage` instead — but **only for that click**. A customer's own left-nav "Admin relationships" link must keep working once you're inside the detail view. That's why `content.js` uses a capture-phase `click` listener on `document` with `event.composedPath()` (click events are composed and cross shadow boundaries) instead of patching `window.history.pushState`/`replaceState` globally — a global patch would also hijack the left-nav link on every future visit to that route, not just the initial jump from the list. `stopImmediatePropagation()` on the capture-phase listener blocks the SPA's own (shadow-scoped) handler before it fires; navigation is then done ourselves via `history.pushState` + a manually dispatched `popstate` event — both work from the isolated world because session-history state and DOM event dispatch aren't tied to a JS world, unlike monkey-patching a function on a shared host object (see constraint 3). Not live-tested against the real Partner Center app; if the SPA's router doesn't pick up the manual `popstate`, fall back to a hard `location.assign(url)` in `redirectToServiceManagement()` (full reload, still correct).
+
 ## Storage keys (`chrome.storage.local`)
 
 | Key | Contents | Expiry |
@@ -68,6 +70,7 @@ These were each discovered the hard way; the fixes are load-bearing.
 | `displayNameCache` | `{ tenantId: displayName }` (GDAP fallback) | tied to `domainCacheExpiry` |
 | `domainCacheExpiry` | epoch ms | — |
 | `nameOverrides` | `{ tenantId: customName }` (user labels) | never |
+| `keepDefaultLinkBehaviour` | `boolean`, default `true` (missing = `true`) | never |
 
 Tenant IDs are stored **lowercased**. Domains/display names are `.trim()`-ed. When only one part of the cache is missing, refetch just that part (independent tracking lets a failed GDAP fetch self-heal on the next load instead of waiting out the 30-day TTL).
 
@@ -113,9 +116,9 @@ To test: load unpacked at `chrome://extensions` (Developer mode). After editing 
 | File | Responsibility |
 |---|---|
 | `manifest.json` | MV3 manifest: `storage` permission, host permissions, two content scripts (isolated + MAIN), background worker, toolbar popup |
-| `content.js` | Column injection, Shadow DOM traversal, data fetch/cache, inline editing, alt-name bridge publisher, cache rebuild, popup message handler |
+| `content.js` | Column injection, Shadow DOM traversal, data fetch/cache, inline editing, alt-name bridge publisher, cache rebuild, popup message handler, customer-name-click redirect |
 | `search-inject.js` | MAIN-world `$filter` rewriter that makes custom names searchable |
 | `background.js` | `PC_FETCH` relay for authenticated cross-origin API calls |
-| `popup.html` / `popup.js` | Toolbar popup: export/import `nameOverrides` as JSON, trigger a cache rebuild, or clear everything |
+| `popup.html` / `popup.js` | Toolbar popup: "Keep default link behaviour" toggle, export/import `nameOverrides` as JSON, trigger a cache rebuild, or clear everything |
 | `build.ps1` | Packs the runtime files into a versioned zip |
 | `icons/`, `screenshots/`, `Docs/` | Store/listing assets and hosted privacy policy |

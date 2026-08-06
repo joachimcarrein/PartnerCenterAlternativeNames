@@ -13,6 +13,7 @@
   const CACHE_KEY = 'domainCache';
   const DISPLAYNAME_KEY = 'displayNameCache';
   const EXPIRY_KEY = 'domainCacheExpiry';
+  const NAV_SETTING_KEY = 'keepDefaultLinkBehaviour'; // default true; see content.js
   // Never add OVERRIDE_KEY to this list — rebuild must not touch custom names.
   const CACHE_KEYS = [CACHE_KEY, DISPLAYNAME_KEY, EXPIRY_KEY];
 
@@ -31,6 +32,7 @@
   const cacheStatusEl = document.getElementById('cache-status');
   const statusEl = document.getElementById('status');
   const fileInput = document.getElementById('file-input');
+  const keepDefaultLinkChk = document.getElementById('chk-keep-default-link');
 
   let pendingImportMode = null; // 'merge' | 'replace', set right before the picker opens
 
@@ -63,6 +65,17 @@
           domainCount + ' domain(s) / ' + nameCount + ' display name(s) cached · expires ' +
           new Date(expiry).toLocaleDateString();
       }
+    });
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Settings — "Keep default link behaviour"                          */
+  /* ------------------------------------------------------------------ */
+
+  function loadNavSetting() {
+    chrome.storage.local.get([NAV_SETTING_KEY], (result) => {
+      keepDefaultLinkChk.checked =
+        result && typeof result[NAV_SETTING_KEY] === 'boolean' ? result[NAV_SETTING_KEY] : true;
     });
   }
 
@@ -316,6 +329,7 @@
           }
           setStatus('Cleared all local data. Refresh the Partner Center tab to start fresh.', 'ok');
           refreshStatus();
+          loadNavSetting();
         });
       });
     });
@@ -325,11 +339,16 @@
   /* Wiring                                                             */
   /* ------------------------------------------------------------------ */
 
+  keepDefaultLinkChk.addEventListener('change', () => {
+    chrome.storage.local.set({ [NAV_SETTING_KEY]: keepDefaultLinkChk.checked });
+  });
+
   document.getElementById('btn-export').addEventListener('click', doExport);
   document.getElementById('btn-import-merge').addEventListener('click', () => startImport('merge'));
   document.getElementById('btn-import-replace').addEventListener('click', () => startImport('replace'));
   document.getElementById('btn-rebuild').addEventListener('click', doRebuild);
   document.getElementById('btn-clear-all').addEventListener('click', doClearAll);
 
+  loadNavSetting();
   refreshStatus();
 })();

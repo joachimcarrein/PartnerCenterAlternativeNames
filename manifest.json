@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Partner Center Alternative Names",
-  "version": "2.0.2",
+  "version": "2.0.3",
   "description": "Adds an editable Alternative Name column to the Microsoft Partner Center Granular Administration customer list.",
   "icons": {
     "16": "icons/icon16.png",
