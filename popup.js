@@ -75,7 +75,7 @@
   function loadNavSetting() {
     chrome.storage.local.get([NAV_SETTING_KEY], (result) => {
       keepDefaultLinkChk.checked =
-        result && typeof result[NAV_SETTING_KEY] === 'boolean' ? result[NAV_SETTING_KEY] : true;
+        result && typeof result[NAV_SETTING_KEY] === 'boolean' ? result[NAV_SETTING_KEY] : false;
     });
   }
 

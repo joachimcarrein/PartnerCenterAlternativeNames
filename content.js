@@ -44,8 +44,10 @@
   let overrideMap = new Map();
   // 'pending' until a load attempt finishes; then 'ready' or 'failed'.
   let loadState = 'pending';
-  // true = unchanged default behaviour (name click -> Admin relationships).
-  let keepDefaultLinkBehaviour = true;
+  // false = new default: name click -> Service management. true is an
+  // explicit opt-in (checked in the popup) to keep the original behaviour
+  // (name click -> Admin relationships).
+  let keepDefaultLinkBehaviour = false;
 
   /* ------------------------------------------------------------------ */
   /* Shadow DOM traversal                                               */
@@ -179,7 +181,7 @@
     return new Promise((resolve) => {
       chrome.storage.local.get([NAV_SETTING_KEY], (result) => {
         keepDefaultLinkBehaviour =
-          result && typeof result[NAV_SETTING_KEY] === 'boolean' ? result[NAV_SETTING_KEY] : true;
+          result && typeof result[NAV_SETTING_KEY] === 'boolean' ? result[NAV_SETTING_KEY] : false;
         dbg('Keep default link behaviour:', keepDefaultLinkBehaviour);
         resolve();
       });
@@ -216,7 +218,7 @@
     }
     if (changes[NAV_SETTING_KEY]) {
       keepDefaultLinkBehaviour =
-        typeof changes[NAV_SETTING_KEY].newValue === 'boolean' ? changes[NAV_SETTING_KEY].newValue : true;
+        typeof changes[NAV_SETTING_KEY].newValue === 'boolean' ? changes[NAV_SETTING_KEY].newValue : false;
       dbg('Keep default link behaviour changed externally:', keepDefaultLinkBehaviour);
     }
   });
@@ -333,7 +335,7 @@
   document.addEventListener(
     'click',
     (e) => {
-      if (keepDefaultLinkBehaviour) return; // default behaviour: do nothing
+      if (keepDefaultLinkBehaviour) return; // opted in: leave native navigation alone
       const path = typeof e.composedPath === 'function' ? e.composedPath() : [];
       const tenantId = findNameButtonClick(path);
       if (!tenantId) return;
