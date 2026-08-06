@@ -4,7 +4,9 @@ A Chrome extension that adds an editable **Alternative Name** column to the Micr
 
 Microsoft's GDAP customer list only shows each customer's display name and tenant ID — which is rarely how you actually think of your customers. This extension shows each customer's primary domain and lets you assign your own private label to any customer, then makes the built-in search box match those labels too.
 
-![Alternative Name column on the customer list](screenshots/ext1.jpg)
+[Chrome Web Store](https://chromewebstore.google.com/detail/partner-center-alternativ/mepicobhhcnbhcfppmihciachfgdefpa) · [Changelog](https://joachimcarrein.github.io/PartnerCenterAlternativeNames/changelog.html) · [Privacy Policy](https://joachimcarrein.github.io/PartnerCenterAlternativeNames/privacy.html)
+
+![Alternative Name column on the customer list](docs/screenshots/ext1.jpg)
 
 ## Features
 
@@ -49,7 +51,7 @@ After changing any extension file, click the **reload** (↻) icon on the extens
 ./build.ps1
 ```
 
-This produces `dist/partner-center-alternative-names-<version>.zip` containing only `manifest.json`, `background.js`, `content.js`, `search-inject.js`, `popup.html`, `popup.js`, and `icons/` — nothing else.
+This produces `dist/partner-center-alternative-names-<version>.zip` containing only `manifest.json`, `background.js`, `content.js`, `search-inject.js`, `popup.html`, `popup.js`, and `docs/icons/` — nothing else. The icons live under `docs/` so the GitHub Pages site can use the same files; the manifest references them there, so they keep that path inside the zip.
 
 ## Project structure
 
@@ -60,9 +62,10 @@ This produces `dist/partner-center-alternative-names-<version>.zip` containing o
 | `search-inject.js` | `MAIN`-world script — rewrites the search `$filter` to make custom names searchable |
 | `background.js` | Service worker — relays authenticated API calls (bypasses content-script CORS) |
 | `popup.html` / `popup.js` | Toolbar popup — export/import of custom labels, on-demand cache rebuild, full reset |
-| `icons/` | Extension icons |
+| `docs/icons/` | Extension icons (also used by the GitHub Pages site) |
 | `build.ps1` | Packs the extension into a versioned zip |
 | `.plan/` | Development notes / change history |
+| `docs/` | Public GitHub Pages site — overview, [changelog](https://joachimcarrein.github.io/PartnerCenterAlternativeNames/changelog.html), and [privacy policy](https://joachimcarrein.github.io/PartnerCenterAlternativeNames/privacy.html) — plus the shared icons and screenshots |
 
 ## Permissions
 

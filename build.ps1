@@ -28,7 +28,11 @@ $root = $PSScriptRoot
 Push-Location $root
 try {
     # Files/folders that make up the shipped extension. Anything not listed
-    # here (build.ps1, .plan, .git, README, etc.) is intentionally excluded.
+    # here (build.ps1, .plan, .git, README, the docs site pages, etc.) is
+    # intentionally excluded. The icons live under docs/icons so the GitHub
+    # Pages site can reference the same files; the manifest points there too,
+    # so the zip must contain them at that same relative path — nothing else
+    # from docs/ ships.
     $include = @(
         "manifest.json",
         "background.js",
@@ -36,7 +40,7 @@ try {
         "search-inject.js",
         "popup.html",
         "popup.js",
-        "icons"
+        "docs/icons"
     )
 
     # Fail loudly if the extension is missing a declared file.
@@ -65,7 +69,14 @@ try {
     New-Item -ItemType Directory -Path $staging -Force | Out-Null
     try {
         foreach ($item in $include) {
-            Copy-Item -Path $item -Destination $staging -Recurse -Force
+            # Preserve each item's relative path inside the zip (docs/icons
+            # must stay docs/icons, matching the manifest's icon paths).
+            $parent = Split-Path $item -Parent
+            $dest = if ($parent) { Join-Path $staging $parent } else { $staging }
+            if (-not (Test-Path $dest)) {
+                New-Item -ItemType Directory -Path $dest -Force | Out-Null
+            }
+            Copy-Item -Path $item -Destination $dest -Recurse -Force
         }
         Compress-Archive -Path (Join-Path $staging "*") -DestinationPath $zipPath -Force
     }

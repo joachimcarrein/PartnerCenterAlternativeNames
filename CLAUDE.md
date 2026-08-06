@@ -101,7 +101,7 @@ Only `nameOverrides` is ever exported — never the domain cache (it's derived, 
 ./build.ps1   # -> dist/partner-center-alternative-names-<version>.zip
 ```
 
-`build.ps1` packs from an **explicit allowlist** (`manifest.json`, `background.js`, `content.js`, `search-inject.js`, `popup.html`, `popup.js`, `icons/`). Nothing else ships — do not rely on directory sweeps. Bump `version` in `manifest.json` for each release.
+`build.ps1` packs from an **explicit allowlist** (`manifest.json`, `background.js`, `content.js`, `search-inject.js`, `popup.html`, `popup.js`, `docs/icons/`). Nothing else ships — do not rely on directory sweeps. **Icons deliberately live inside `docs/`** so the GitHub Pages site can reference the same files without a copy; the manifest points at `docs/icons/…` and the build preserves that relative path inside the zip (Chrome is fine with subfolder icon paths). The rest of `docs/` (HTML pages, screenshots) must never ship. Bump `version` in `manifest.json` for each release, **and add a matching entry to `docs/changelog.html` in the same change** (see Repository conventions).
 
 To test: load unpacked at `chrome://extensions` (Developer mode). After editing any file, click the extension's **reload (↻)** icon, then refresh the Partner Center page — refreshing the page alone runs the old build.
 
@@ -109,7 +109,9 @@ To test: load unpacked at `chrome://extensions` (Developer mode). After editing 
 
 - **Vanilla JS, no dependencies, no transpile.** Keep it that way; match the existing IIFE + `dbg()` style and comment density.
 - **`.plan/`** holds the change history / prompts. It must contain **only fictional sample data** (Acme, Contoso, Northwind, `a1b2c3d4-…` tenant IDs, `*.onmicrosoft.com`). **Never commit real customer data** — tenant GUIDs, customer/company names, or customer domains — anywhere in this public repo, including code comments and screenshots. Screenshots must use the same fictional data.
-- **Privacy policy** is `Docs/privacy.html`, published via GitHub Pages and linked from the store listing and `README.md`.
+- **`docs/` is the public GitHub Pages site** (served at `https://joachimcarrein.github.io/PartnerCenterAlternativeNames/`): `index.html` (overview), `changelog.html`, `privacy.html`, plus `docs/screenshots/` and `docs/icons/` (Pages only serves the `docs/` folder, which is why screenshots and icons live there — the icons are shared with the extension manifest, see Building). All three pages share the same inline CSS + theme-toggle boilerplate; keep them visually in sync when styling changes.
+- **Changelog is mandatory per release:** every `manifest.json` version bump gets a new entry at the **top** of `docs/changelog.html` (`Version X.Y.Z <span class="date">D Month YYYY</span>` + a short `<ul>`). Keep bullets user-facing and brief — what changed for the user, not implementation detail. Never rewrite history for already-released versions; add, don't edit.
+- **Privacy policy** is `docs/privacy.html`, linked from the store listing and `README.md`.
 
 ## File map
 
@@ -121,4 +123,4 @@ To test: load unpacked at `chrome://extensions` (Developer mode). After editing 
 | `background.js` | `PC_FETCH` relay for authenticated cross-origin API calls |
 | `popup.html` / `popup.js` | Toolbar popup: "Keep default link behaviour" toggle, export/import `nameOverrides` as JSON, trigger a cache rebuild, or clear everything |
 | `build.ps1` | Packs the runtime files into a versioned zip |
-| `icons/`, `screenshots/`, `Docs/` | Store/listing assets and hosted privacy policy |
+| `docs/` | Public GitHub Pages site: `index.html` (overview), `changelog.html` (update on every release), `privacy.html`, `screenshots/` (fictional data only), `icons/` (shared with the manifest — the only part of `docs/` that ships in the zip) |

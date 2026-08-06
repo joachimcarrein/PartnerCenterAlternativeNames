@@ -3,7 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Privacy Policy — Partner Center Alternative Names</title>
+  <title>Partner Center Alternative Names — Chrome Extension</title>
+  <meta name="description" content="A Chrome extension that adds an editable Alternative Name column to the Microsoft Partner Center GDAP customer list, and makes the search box match your custom names.">
   <meta name="robots" content="index, follow">
   <link rel="icon" type="image/png" href="icons/icon128.png">
   <style>
@@ -37,7 +38,6 @@
     }
     h1 { font-size: 1.9rem; line-height: 1.25; margin-bottom: .25rem; }
     h2 { font-size: 1.25rem; margin-top: 2.2rem; border-bottom: 1px solid var(--border); padding-bottom: .3rem; }
-    .updated { color: var(--muted); font-size: .95rem; margin-top: 0; }
     /* Shared site header — keep identical across index/changelog/privacy. */
     .site-header { border-bottom: 1px solid var(--border); padding-bottom: 1.6rem; margin-bottom: 2rem; }
     .hero { display: flex; align-items: center; gap: .9rem; }
@@ -45,6 +45,13 @@
     .site-title { font-size: 1.9rem; line-height: 1.25; font-weight: 700; margin: 0; }
     .tagline { color: var(--muted); font-size: .95rem; margin: .35rem 0 0; }
     .actions { margin: 1rem 0 0; }
+    code {
+      background: var(--code-bg); padding: .12em .35em; border-radius: 4px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .9em;
+    }
+    ul { padding-left: 1.3rem; }
+    li { margin: .35rem 0; }
+    a { color: var(--link); }
     .cta {
       display: inline-block;
       margin: 0 .5rem .5rem 0;
@@ -61,14 +68,15 @@
       background: var(--code-bg);
       border: 1px solid var(--border);
     }
-    .page-title { font-size: 1.6rem; margin: 0 0 .2rem; }
-    code {
-      background: var(--code-bg); padding: .12em .35em; border-radius: 4px;
-      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .9em;
+    figure { margin: 1.5rem 0; }
+    figure img {
+      max-width: 100%;
+      height: auto;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      display: block;
     }
-    ul { padding-left: 1.3rem; }
-    li { margin: .35rem 0; }
-    a { color: var(--link); }
+    figcaption { color: var(--muted); font-size: .9rem; margin-top: .4rem; }
     footer { margin-top: 3rem; color: var(--muted); font-size: .9rem; border-top: 1px solid var(--border); padding-top: 1rem; }
     .theme-toggle {
       position: fixed;
@@ -132,98 +140,60 @@
   <header class="site-header">
     <div class="hero">
       <img src="icons/icon128.png" alt="" width="128" height="128">
-      <div class="site-title">Partner Center Alternative Names</div>
+      <h1 class="site-title">Partner Center Alternative Names</h1>
     </div>
     <p class="tagline">A Chrome extension for the Microsoft Partner Center GDAP customer list.</p>
     <p class="actions">
       <a class="cta" href="https://chromewebstore.google.com/detail/partner-center-alternativ/mepicobhhcnbhcfppmihciachfgdefpa">Get it on the Chrome Web Store</a>
-      <a class="cta secondary" href="index.html">Overview</a>
       <a class="cta secondary" href="changelog.html">Changelog</a>
+      <a class="cta secondary" href="privacy.html">Privacy Policy</a>
     </p>
   </header>
 
-  <h1 class="page-title">Privacy Policy</h1>
-  <p class="updated">Last updated: 6 August 2026</p>
-
   <p>
-    Partner Center Alternative Names (&ldquo;the extension&rdquo;) is a Chrome extension published by
-    Joachim Carrein. This policy explains exactly what data the extension handles and where
-    it goes. In short: <strong>the extension does not send any data to us or to any third party.</strong>
-    Everything happens inside your own browser and, where needed, directly between your browser and
-    Microsoft&rsquo;s own services.
+    Microsoft's <strong>Customers | Granular Administration</strong> (GDAP) page only shows each customer's
+    display name and tenant ID &mdash; which is rarely how you actually think of your customers. This extension
+    adds an editable <strong>&ldquo;Alternative Name&rdquo;</strong> column showing each customer's primary domain,
+    lets you assign your own private label to any customer, and makes the page's built-in search box match those
+    labels too.
   </p>
 
-  <h2>What the extension does</h2>
-  <p>
-    The extension runs on a single Microsoft Partner Center page — the Granular Delegated Admin (GDAP)
-    customer list at <code>https://partner.microsoft.com/dashboard/v2/customers/granularadminaccess/*</code>.
-    On that page it:
-  </p>
+  <h2>Features</h2>
   <ul>
-    <li>Adds one extra read-only column, <strong>&ldquo;Alternative Name&rdquo;</strong>, showing each customer&rsquo;s primary domain (or display name where no domain is available).</li>
-    <li>Lets the signed-in user assign a personal, custom label to a customer.</li>
-    <li>Makes the page&rsquo;s existing search box also match those custom labels.</li>
+    <li><strong>Extra column</strong> — shows each customer's primary domain (e.g. <code>acmecorp.onmicrosoft.com</code>), with their display name as fallback.</li>
+    <li><strong>Editable labels</strong> — give any customer your own custom name; reset to the original at any time.</li>
+    <li><strong>Searchable</strong> — the page's search box also matches your custom names.</li>
+    <li><strong>Portable</strong> — export your labels to a JSON file and import them in another browser or profile.</li>
+    <li><strong>Fast</strong> — customer data is cached locally for 30 days and can be rebuilt on demand from the toolbar popup.</li>
+    <li><strong>Private</strong> — everything stays in your browser; data is exchanged only with Microsoft's own APIs. See the <a href="privacy.html">Privacy Policy</a>.</li>
   </ul>
 
-  <h2>Data the extension handles</h2>
+  <h2>Screenshots</h2>
+  <p>All screenshots use fictional sample data.</p>
+  <figure>
+    <img src="screenshots/ext1.jpg" alt="The GDAP customer list with an extra Alternative Name column showing custom labels and primary domains" loading="lazy" width="1280" height="800">
+    <figcaption>The <strong>Alternative Name</strong> column on the customer list — custom labels and primary domains side by side with Microsoft's own data.</figcaption>
+  </figure>
+  <figure>
+    <img src="screenshots/ext2.jpg" alt="Editing a customer's alternative name inline in the grid" loading="lazy" width="1280" height="800">
+    <figcaption>Edit a name inline — click the pencil, type your label, confirm.</figcaption>
+  </figure>
+  <figure>
+    <img src="screenshots/ext3.jpg" alt="Searching for 'demo' returns customers whose custom alternative names match" loading="lazy" width="1280" height="800">
+    <figcaption>The built-in search box matches your custom names too — searching <em>demo</em> finds customers whose Microsoft name is something else entirely.</figcaption>
+  </figure>
+
+  <h2>Links</h2>
   <ul>
-    <li><strong>Customer information shown on the page</strong> — company names, domains, and tenant identifiers. This is business/organizational data that Microsoft already displays to the signed-in administrator. The extension reads it to build the extra column.</li>
-    <li><strong>Microsoft authentication tokens</strong> — short-lived tokens that the Microsoft Partner Center page itself places in the browser&rsquo;s <code>sessionStorage</code>. The extension reads them only at the moment it needs to call a Microsoft API, and uses them solely to authorize those read-only lookups. <strong>The extension never stores these tokens and never transmits them anywhere except to Microsoft&rsquo;s own API endpoints.</strong></li>
-    <li><strong>Your custom labels</strong> — any alternative name you type for a customer.</li>
+    <li><a href="https://chromewebstore.google.com/detail/partner-center-alternativ/mepicobhhcnbhcfppmihciachfgdefpa">Chrome Web Store listing</a></li>
+    <li><a href="changelog.html">Changelog</a></li>
+    <li><a href="privacy.html">Privacy Policy</a></li>
+    <li><a href="https://github.com/joachimcarrein/PartnerCenterAlternativeNames">Source code on GitHub</a></li>
+    <li><a href="https://github.com/joachimcarrein/PartnerCenterAlternativeNames/issues">Report an issue</a></li>
   </ul>
-
-  <h2>Where the data goes</h2>
-  <ul>
-    <li><strong>Network requests are made only to Microsoft&rsquo;s own domains:</strong>
-      <code>partner.microsoft.com</code>, <code>api.partnercenter.microsoft.com</code>, and
-      <code>api.partnercustomersecurity.microsoft.com</code>. These are the same first-party services the
-      Partner Center page already uses. The requests are <strong>read-only lookups</strong> to retrieve
-      customer domains and names for display. The extension performs no administrative actions.</li>
-    <li><strong>No data is ever sent to the developer or to any third party.</strong></li>
-    <li>The extension contains <strong>no analytics, no tracking, no advertising, and no remote code.</strong> All of its code is contained within the extension package.</li>
-  </ul>
-
-  <h2>Data storage and retention</h2>
-  <p>The extension uses <code>chrome.storage.local</code>, which keeps data <strong>on your device only</strong>:</p>
-  <ul>
-    <li>A cache of customer domains/names, kept for up to <strong>30 days</strong> to avoid repeating the same Microsoft API calls.</li>
-    <li>Your custom labels, kept until you change or remove them.</li>
-  </ul>
-  <p>This data never leaves your browser. You can remove it at any time by clearing the extension&rsquo;s storage or by uninstalling the extension.</p>
-
-  <h2>Exporting and importing your labels</h2>
-  <p>
-    The extension&rsquo;s toolbar popup lets you export your custom labels to a JSON file saved to a location
-    you choose on your own device, and import that file back in &mdash; on the same browser or a different
-    one. This is the only way the extension writes data outside <code>chrome.storage.local</code>, and it
-    only happens when you click Export. Once the file is saved, it is entirely in your hands; the extension
-    has no further involvement with it and nothing is uploaded anywhere. The exported file contains only
-    your custom labels, never the cached customer domains or Microsoft authentication tokens.
-  </p>
-
-  <h2>Data sharing</h2>
-  <p>
-    We do <strong>not</strong> sell or transfer your data to third parties. We do <strong>not</strong> use or
-    transfer your data for any purpose unrelated to the extension&rsquo;s single purpose. We do
-    <strong>not</strong> use your data to determine creditworthiness or for lending purposes.
-  </p>
-
-  <h2>Permissions</h2>
-  <ul>
-    <li><code>storage</code> — to save the local cache and your custom labels on your device.</li>
-    <li>Host access to <code>partner.microsoft.com</code> and the two Microsoft API domains above — to run on the specific Partner Center page and to look up customer domains/names from Microsoft&rsquo;s own APIs.</li>
-  </ul>
-
-  <h2>Changes to this policy</h2>
-  <p>If this policy changes, the updated version will be published at the same location with a new &ldquo;Last updated&rdquo; date.</p>
-
-  <h2>Contact</h2>
-  <p>For questions about this policy, please open an issue on our GitHub page: <a href="https://github.com/joachimcarrein/PartnerCenterAlternativeNames/issues">github.com/joachimcarrein/PartnerCenterAlternativeNames/issues</a></p>
 
   <footer>
     Partner Center Alternative Names is an independent extension and is not affiliated with or endorsed by Microsoft.
-    &middot; <a href="index.html">Overview</a>
-    &middot; <a href="changelog.html">Changelog</a>
   </footer>
 
   <script>
