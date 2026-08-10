@@ -285,6 +285,15 @@
   // history.pushState patch (which would also hijack the left-nav link on
   // every future visit to that route).
   //
+  // Holding Shift while clicking inverts whichever target the setting
+  // currently selects, for that one click only (the stored setting itself is
+  // never touched):
+  //   unchecked + plain click    -> Service management
+  //   unchecked + Shift+click    -> Admin relationships
+  //   checked   + plain click    -> Admin relationships
+  //   checked   + Shift+click    -> Service management
+  // i.e. goToServiceManagement = (keepDefaultLinkBehaviour === event.shiftKey).
+  //
   // Click events are composed and cross shadow boundaries, so
   // event.composedPath() sees the actual button element even though it is
   // nested several shadow roots deep. A capture-phase listener on `document`
@@ -335,10 +344,13 @@
   document.addEventListener(
     'click',
     (e) => {
-      if (keepDefaultLinkBehaviour) return; // opted in: leave native navigation alone
       const path = typeof e.composedPath === 'function' ? e.composedPath() : [];
       const tenantId = findNameButtonClick(path);
       if (!tenantId) return;
+      // Shift held inverts whichever target the setting currently selects,
+      // for this one click only — see the comment block above.
+      const goToServiceManagement = keepDefaultLinkBehaviour === e.shiftKey;
+      if (!goToServiceManagement) return; // let native navigation proceed (-> Admin relationships)
       e.preventDefault();
       e.stopImmediatePropagation();
       redirectToServiceManagement(tenantId);
