@@ -1,0 +1,45 @@
+# Runs the node:test suites on every push and pull request.
+#
+# There is no package.json, no dependencies and no build step (see CLAUDE.md),
+# so this is deliberately just "check out, install Node, run the tests" — no
+# npm install, no cache, no lockfile.
+#
+# Node >= 21 is required: the documented command passes a *quoted* glob and
+# lets Node expand it (so the identical command works in PowerShell and bash),
+# and --test only gained glob support in Node 21. `lts/*` is comfortably past
+# that. The "no tests discovered" guard below exists because a Node that could
+# not expand the glob would otherwise run zero tests and still report success,
+# which is worse than having no workflow at all.
+name: Tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+
+      - name: Report Node version
+        run: node --version
+
+      - name: Run tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --test "tests/**/*.test.js" | tee test-output.txt
+          # pipefail above already fails the step on a failing assertion; this
+          # catches the other failure mode — a run that discovered nothing.
+          if ! grep -qE 'tests [1-9][0-9]*$' test-output.txt; then
+            echo "::error::No tests were discovered. Check the glob pattern and the Node version."
+            exit 1
+          fi

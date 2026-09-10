@@ -1,2 +1,5 @@
 # Build output
 dist/
+
+# CI test log (written by .github/workflows/tests.yml)
+test-output.txt

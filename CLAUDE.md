@@ -103,7 +103,13 @@ node --test "tests/**/*.test.js"   # 42 assertions, ~0.15s
 
 **Quote the glob and never pass the bare directory** — `node --test tests` fails with `MODULE_NOT_FOUND`, because the runner resolves the directory as an entry point instead of discovering test files inside it. Node expands the quoted glob itself, so the identical command works in PowerShell and bash. The `*.test.js` suffix is also what keeps `tests/helpers/` out of the run: Node otherwise treats *every* file under a directory named `tests` as a test file.
 
-Zero dependencies — `node:test` and `node:assert` are built into Node, so there is still no `package.json` and no `node_modules`. Nothing under `tests/` ships either: `build.ps1` packs from an explicit allowlist, so a new directory is excluded by default rather than needing a blacklist entry.
+Zero dependencies — `node:test` and `node:assert` are built into Node, so there is still no `package.json` and no `node_modules`. Nothing under `tests/` ships either: `build.ps1` packs from an explicit allowlist, so a new directory (`tests/`, `.github/`) is excluded by default rather than needing a blacklist entry.
+
+**CI runs the suite on every push and pull request** — `.github/workflows/tests.yml`, the repo's only workflow (GitHub Pages is deployed from the `docs/` folder via repo settings, not a workflow, so this does not touch it). Three details in there are load-bearing; do not "tidy" them away:
+
+- **`set -o pipefail` is mandatory.** The run pipes through `tee`, and without pipefail `tee`'s exit code masks a failing test — CI reports green while assertions fail. Verified both ways.
+- **The "no tests discovered" guard is not paranoia.** A Node too old to expand the quoted glob would run zero tests and still exit 0, which is worse than having no workflow. The guard greps the summary line for a non-zero test count.
+- **`node-version: lts/*`**, because `--test` only gained glob support in Node 21 and the workflow deliberately runs the exact command documented above rather than a CI-only variant.
 
 **How tests reach the code.** Every runtime file is a bare `(() => { ... })()` exporting nothing, and it must stay that way — do **not** add `module.exports` footers to shipped files. (`search-inject.js` runs in the page's MAIN world, where a stray global `module` left by Partner Center's own bundler could make such a footer do something unintended.) Instead `tests/helpers/load-iife.js` strips the IIFE wrapper and runs the body in a `node:vm` context, with stub globals from `tests/helpers/stubs.js`. Two rules when extending it:
 

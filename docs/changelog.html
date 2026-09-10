@@ -157,7 +157,7 @@
     <li>Fixed a failed refresh being able to store an <strong>empty</strong> result as if it were valid for 30 days — which left the column stuck on &quot;Unknown&quot; even after reloading the page or using <strong>Rebuild local cache</strong>.</li>
     <li>Names now appear as soon as they can be loaded, instead of only after a page refresh.</li>
     <li>Your own custom names were never affected by this and are left untouched.</li>
-    <li><em>Under the hood:</em> added an automated test suite covering the import/export of your custom names and the search integration. It is run before every release, so the code paths that touch your saved names are checked first. No change to how the extension behaves.</li>
+    <li><em>Under the hood:</em> added an automated test suite covering the import/export of your custom names and the search integration. It now runs automatically on every change, so the code paths that touch your saved names are checked before anything ships. No change to how the extension behaves.</li>
   </ul>
 
   <h2 id="v2-1-0">Version 2.1.0 <span class="date">10 August 2026</span></h2>
