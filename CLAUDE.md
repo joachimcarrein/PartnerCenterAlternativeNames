@@ -22,13 +22,14 @@ Four execution contexts cooperate:
 |---|---|---|---|
 | Content script | `content.js` | Isolated world (`document_idle`) | Yes |
 | Search interceptor | `search-inject.js` | **MAIN world** (`document_start`) | No |
-| Service worker | `background.js` | Extension worker | Yes |
+| Service worker | `background.js` | Extension worker | Yes — including `chrome.action` (the badge) |
 | Toolbar popup | `popup.html` / `popup.js` | Extension page (`action.default_popup`) | Yes |
 
 Data/flow:
 
 - `content.js` owns all state (domains, display names, user overrides), injects the column into the grid's Shadow DOM, handles editing, and caches to `chrome.storage.local`.
 - `content.js` cannot fetch the Microsoft APIs directly (CORS blocks MV3 content-script cross-origin fetches), so it relays every API call to `background.js` via `chrome.runtime.sendMessage({ type: 'PC_FETCH', url, headers })`.
+- `content.js` also records **facts** about each load to the `loadHealth` storage key and sends `background.js` a `{ type: 'ALTNAME_HEALTH', level }` message, which is the only thing that sets the toolbar badge. `popup.js` owns the single `assessHealth()` that turns those facts into a level and a message — see constraint 11.
 - `search-inject.js` runs in the page's MAIN world so it can patch `XMLHttpRequest`/`fetch`. It rewrites the search request's OData `$filter` to make custom names searchable. It cannot read `chrome.storage`, so `content.js` publishes a small alt-name index to it over `window.postMessage` (marker key `__altnameBridge`).
 - `popup.js` reads/writes `chrome.storage.local` directly (it's an extension page, not a content script) for export/import of `nameOverrides`. For "Rebuild local cache" it can only clear the cache keys itself — the Microsoft tokens live in the GDAP page's `sessionStorage`, so it messages `content.js` (`chrome.tabs.sendMessage({ type: 'ALTNAME_REBUILD_CACHE' })`) to do the actual refetch. For "Clear local cache" (a separate, deliberately more destructive action that also deletes `nameOverrides`) it calls `chrome.storage.local.clear()` directly and messages `content.js` (`{ type: 'ALTNAME_CLEAR_ALL' }`) only to reset in-memory state for display — no refetch.
 
@@ -62,6 +63,17 @@ These were each discovered the hard way; the fixes are load-bearing.
 
 10. **The "Keep default link behaviour" redirect is a scoped click interception, not a global `history.pushState` patch — and it defaults to OFF (opt-in), inverting the setting's own name.** Clicking a customer's name in the grid (`<customersvcadmin_he-button appearance="link">` inside `cell-displayName-{id}`, several shadow roots deep) normally lands on `.../adminrelationships`; on a fresh install (setting missing/`false`) it lands on `.../servicemanagementpage` instead — that redirect is the new default, not the original Microsoft behaviour. Only a user who explicitly checks "Keep default link behaviour" (setting `true`) gets `.../adminrelationships` back. This was a deliberate correction to the original 2.0.3 plan, which had specified the opposite default; don't "fix" it back without re-checking with the user. The redirect applies **only to that specific click**, not globally — a customer's own left-nav "Admin relationships" link must keep working once you're inside the detail view. That's why `content.js` uses a capture-phase `click` listener on `document` with `event.composedPath()` (click events are composed and cross shadow boundaries) instead of patching `window.history.pushState`/`replaceState` globally — a global patch would also hijack the left-nav link on every future visit to that route, not just the initial jump from the list. `stopImmediatePropagation()` on the capture-phase listener blocks the SPA's own (shadow-scoped) handler before it fires; navigation is then done ourselves via `history.pushState` + a manually dispatched `popstate` event — both work from the isolated world because session-history state and DOM event dispatch aren't tied to a JS world, unlike monkey-patching a function on a shared host object (see constraint 3). Live-tested against the real Partner Center app: the `history.pushState` + manually dispatched `popstate` navigation is picked up correctly by the SPA's router, so the `location.assign(url)` fallback in `redirectToServiceManagement()` has never been needed. **Holding Shift while clicking inverts whichever target the setting currently selects, for that one click only** (the stored setting itself is never touched): the redirect condition is `goToServiceManagement = (keepDefaultLinkBehaviour === event.shiftKey)`, checked inside the same capture-phase listener. This means the listener can no longer early-return before resolving `tenantId` when the setting is checked (it used to) — `findNameButtonClick(path)` now always runs first, since Shift can flip the outcome in either setting state. Also live-tested and confirmed working.
 
+11. **The health signal: `content.js` records facts, `popup.js` judges them, and the badge hangs off the same single trigger.** 2.1.1 degraded 7 of every 10 rows to `Unknown` while reporting success, and nothing anywhere said so — `loadDomainData()` returned true on `domainMap.size || displayNameMap.size`, and `rebuildCache()` reported `ok` on `!!(fresh || names)`. 2.2.0 is the signal that catches that class of failure, and five details in it are load-bearing:
+
+    - **Facts only in `content.js`** — sources, counts, a reason enum, row tallies. No verdicts and no user-facing strings, because with no module system a verdict computed there and rendered in the popup would need its wording duplicated in both files and would drift. The single exception is `badgeLevel()`, which computes only the badge's on/off; it agrees with `assessHealth()`'s warn rule by construction (a failed or partial half warns, an unresolved row does not).
+    - **`healthSignature()` must not include `at`.** Include it and every call differs from the last, the dedupe never fires, and an injection pass on every debounced mutation (scroll, page, search) becomes a storage write on every debounced mutation. The consequence is that `at` means "when this state was first observed" rather than "last checked" — the more useful of the two. `tokens` is out of the signature for the same reason.
+    - **A `'fetch'` result with `count: 0` is a success, not a failure.** A partner with no delegated-admin customers legitimately has zero display names. Both fetchers used to collapse that into `null` alongside every hard failure (`return keys.length ? out : null`); harmless until a badge hung off it, at which point it becomes a false alarm. The result objects (`{ ok, data, count, partial, reason, pages }`) exist to keep the five outcomes apart.
+    - **A missing GDAP token on the names half is `'awaiting'`, not `'failed'`.** `content.js` runs at `document_idle` but that token exists only once the page itself has called the API (constraint 4), so at first load "no token" usually means not-yet-arrived. A single **15s** `setTimeout` escalates `'awaiting'` to `'failed'`, cancelled by a successful recovery; without it a genuinely broken state would sit quietly at `pending` forever. **15s is a guess** — if it ever fires on a healthy page, move the number, not the design.
+    - **Every path that writes health must also re-render the column**, because a cell's degraded tooltip is decided at render time. The grace escalation is the one that bites: the cells were rendered while the half was still `awaiting`, and on an idle page no grid mutation ever comes to re-render them, so the tooltip silently never appeared. `rebuildCache()` and `maybeRecoverDisplayNames()` already did this; `startNamesGrace()` did not. **Found by live-testing 2.2.0, not by any unit test** — there is now one covering it. The same reasoning is why `popup.js` listens for `loadHealth` changes: a popup open during the amber phase would otherwise sit on "still loading" long after the load had failed.
+    - **The badge is tab-scoped** (`chrome.action.setBadgeText({ text, tabId })`). The tokens live in one tab's `sessionStorage`, so the condition is per-tab, and a global badge would outlive the tab that earned it. Two GDAP tabs share one `loadHealth` (last write wins) but get their own badges; the popup is one surface and cannot show two states — accepted.
+
+    An unresolved row while both halves succeeded is **not** a warning: non-transacted customers legitimately have neither a domain nor a display name (constraint 5), and badging that teaches the user to ignore the badge. A degraded cell keeps the text `Unknown` and gains only a tooltip — a fourth placeholder would ripple into `PLACEHOLDERS`, `beginEdit()`'s is-this-a-real-value test and `applyEdit()`'s equal-to-natural comparison.
+
 ## Storage keys (`chrome.storage.local`)
 
 | Key | Contents | Expiry |
@@ -71,8 +83,11 @@ These were each discovered the hard way; the fixes are load-bearing.
 | `domainCacheExpiry` | epoch ms | — |
 | `nameOverrides` | `{ tenantId: customName }` (user labels) | never |
 | `keepDefaultLinkBehaviour` | `boolean`, default `false` (missing = `false`) — opt-in only | never |
+| `loadHealth` | last-load facts: `{ at, domains:{source,count,reason}, names:{…}, rows:{injected,resolved}, tokens:{…} }`. Cleared with the cache keys | overwritten (only when the facts change) |
 
 Tenant IDs are stored **lowercased**. Domains/display names are `.trim()`-ed. When only one part of the cache is missing, refetch just that part (independent tracking lets a failed GDAP fetch self-heal on the next load instead of waiting out the 30-day TTL).
+
+Two rules about **what may become the cache**, both learned from the same bug one step apart: an **empty** half is not data (`{}` is truthy, and persisting it froze the column at `Unknown` for the full 30-day TTL — 2.1.1), and a **partial** half is not complete data either. A partial fetch result therefore renders (some domains beat none) but is never written to `domainCache`/`displayNameCache`.
 
 ### Export/import file contract (`popup.js`)
 
@@ -93,12 +108,14 @@ Only `nameOverrides` is ever exported — never the domain cache (it's derived, 
 
 ## Debugging
 
-`content.js` exposes `window._tenantDomainDebug` in the page for DevTools inspection: `getCache()`, `clearCache()`, `getMap()`, `getNameMap()`, `getOverrides()`, `clearOverrides()`, `rebuildCache()`, `getAltIndex()`, `exportOverrides()`, `importOverrides(data, mode)`. Both scripts log under `[AltName]` / `[AltName/net]` when their `DEBUG` flag is on.
+`content.js` exposes `window._tenantDomainDebug` in the page for DevTools inspection: `getCache()`, `clearCache()`, `getMap()`, `getNameMap()`, `getOverrides()`, `clearOverrides()`, `rebuildCache()`, `getAltIndex()`, `getHealth()`, `getTokenStatus()`, `exportOverrides()`, `importOverrides(data, mode)`. Both scripts log under `[AltName]` / `[AltName/net]` when their `DEBUG` flag is on.
+
+To exercise the degraded path by hand, make `getGdapToken()` return `null` and reload — the names half should go `awaiting` → `failed` after 15s, the badge should show `!`, and the popup should name the display-name half. `getHealth()` shows the record the popup and the badge are both driven from.
 
 ## Testing
 
 ```powershell
-node --test "tests/**/*.test.js"   # 60 assertions, ~0.15s
+node --test "tests/**/*.test.js"   # 171 assertions, ~0.2s
 ```
 
 **Quote the glob and never pass the bare directory** — `node --test tests` fails with `MODULE_NOT_FOUND`, because the runner resolves the directory as an entry point instead of discovering test files inside it. Node expands the quoted glob itself, so the identical command works in PowerShell and bash. The `*.test.js` suffix is also what keeps `tests/helpers/` out of the run: Node otherwise treats *every* file under a directory named `tests` as a test file.
@@ -117,9 +134,14 @@ Zero dependencies — `node:test` and `node:assert` are built into Node, so ther
 - Top-level `function` declarations become properties of the context's global object even under `'use strict'`, so they come out for free. Top-level `const`/`let` do **not** — they stay lexical, so ask for them via the `expose` snippet argument, which is appended to the same source string and therefore shares that scope.
 - Inject **host** globals only. A fresh vm context already owns its own ECMAScript intrinsics; layering the outer realm's `Object`/`Array` on top mixes realms and makes `instanceof` unreliable inside the module. For the same reason, compare vm-created objects using `plain()` from `stubs.js` — `deepStrictEqual` otherwise rejects them as "same structure but not reference-equal".
 
-**What is covered** (details in `.plan/2.1.1.tests.md`): `popup.js` export/import — `nameOverrides` is the only storage key with no server-side source of truth, so a bug there loses data permanently — and `search-inject.js`'s `$filter` rewriter, where every limit in constraint 6 is load-bearing and fails silently.
+**Loading `content.js` in particular** (added in 2.2.0, and the reason it went uncovered before) needs two things beyond the stub set:
 
-**What is deliberately not covered:** Shadow DOM traversal, column injection and the MutationObserver. That needs jsdom (a dependency), and its shadow-root/slot fidelity would not match Partner Center's real markup, so such tests would exercise the fixture rather than reality. Anything hitting the Microsoft APIs is out too. Know the limit of unit tests here: the 2.1.1 GDAP-token bug was an external contract change, and **no test could have caught it** — only a live check against the real page does.
+- **Fake timers, not a convenience but a requirement.** `content.js` arms a 10-deep 500ms `waitForGrid()` retry chain and a 15s display-name grace timer the moment it loads; real timers keep the test process alive for both. `fakeTimers()` records instead of scheduling, which also makes the grace escalation testable via `fire(15000)`.
+- **Undo `init()`.** `content.js` is a bare IIFE, so `init()` — cache read, both fetches, the first health write — has already run by the time `loadIife()` returns. Each suite's loader therefore awaits one macrotask, calls `cancelNamesGrace()` through the module (dropping the fake timer alone would leave the module's own handle set), rolls `chrome.store` back to what the test declared, and rewinds the fake API response plan. Without that rollback an assertion can be satisfied by something `init()` left behind rather than by the code under test.
+
+**What is covered:** `popup.js` export/import — `nameOverrides` is the only storage key with no server-side source of truth, so a bug there loses data permanently (`.plan/2.1.1.tests.md`); `search-inject.js`'s `$filter` rewriter, where every limit in constraint 6 is load-bearing and fails silently; `tools/changelog-notes.js`, which gates every release; and since 2.2.0 (`.plan/2.2.0.md`) the health signal end to end — `assessHealth()`'s truth table, `describeRebuild()`, `healthSignature()`'s dedupe, `halfFacts()`, the row tallies, the fetch result objects with all five reasons, and the 2.1.1 cache fixes retro-covered (`nonEmpty()`, `{}` reading back as a miss, a failed half unable to clear a populated one, and a partial result never being persisted).
+
+**What is deliberately not covered:** Shadow DOM traversal, column injection and the MutationObserver. That needs jsdom (a dependency), and its shadow-root/slot fidelity would not match Partner Center's real markup, so such tests would exercise the fixture rather than reality. Anything hitting the Microsoft APIs is out too, as are `chrome.action` (the badge itself), whether Chrome clears a tab-scoped badge on navigation, and whether 15s is the right grace window — those four are on the live-test checklist in `.plan/2.2.0.md` instead. Know the limit of unit tests here: the 2.1.1 GDAP-token bug was an external contract change, and **no test could have caught it** — only a live check against the real page does.
 
 ## Building & loading
 
@@ -158,12 +180,12 @@ To test: load unpacked at `chrome://extensions` (Developer mode). After editing 
 | File | Responsibility |
 |---|---|
 | `manifest.json` | MV3 manifest: `storage` permission, host permissions, two content scripts (isolated + MAIN), background worker, toolbar popup |
-| `content.js` | Column injection, Shadow DOM traversal, data fetch/cache, inline editing, alt-name bridge publisher, cache rebuild, popup message handler, customer-name-click redirect |
+| `content.js` | Column injection, Shadow DOM traversal, data fetch/cache, inline editing, alt-name bridge publisher, cache rebuild, popup message handler, customer-name-click redirect, health record + badge trigger |
 | `search-inject.js` | MAIN-world `$filter` rewriter that makes custom names searchable |
-| `background.js` | `PC_FETCH` relay for authenticated cross-origin API calls |
-| `popup.html` / `popup.js` | Toolbar popup: "Keep default link behaviour" toggle, export/import `nameOverrides` as JSON, trigger a cache rebuild, or clear everything |
+| `background.js` | `PC_FETCH` relay for authenticated cross-origin API calls, and the tab-scoped `chrome.action` badge (`ALTNAME_HEALTH`) |
+| `popup.html` / `popup.js` | Toolbar popup: degraded-load banner (`assessHealth()`), "Keep default link behaviour" toggle, export/import `nameOverrides` as JSON, trigger a cache rebuild, or clear everything |
 | `build.ps1` | Packs the runtime files into a versioned zip |
 | `tools/` | CI tooling, never shipped: `changelog-notes.js` turns a `docs/changelog.html` entry into Markdown release notes (`node tools/changelog-notes.js <version>`). Not an IIFE — it is not a shipped file, so it uses a normal `module.exports` |
 | `.github/workflows/` | `tests.yml` (the suite, on PRs and pushes to `main`) and `release.yml` (publishes `v<version>` with the zip when the manifest version is new) |
-| `tests/` | `node --test` suites (zero dependencies, never shipped): `popup-import.test.js`, `search-inject-filter.test.js`, `changelog-notes.test.js`, plus `helpers/load-iife.js` (vm loader for the IIFE files) and `helpers/stubs.js` (DOM / `chrome.*` / bridge fakes) |
+| `tests/` | `node --test` suites (zero dependencies, never shipped): `popup-import.test.js`, `popup-health.test.js`, `search-inject-filter.test.js`, `content-health.test.js`, `content-cache.test.js`, `changelog-notes.test.js`, plus `helpers/load-iife.js` (vm loader for the IIFE files) and `helpers/stubs.js` (DOM / `chrome.*` / bridge / `sessionStorage` / timer fakes) |
 | `docs/` | Public GitHub Pages site: `index.html` (overview), `changelog.html` (update on every release), `privacy.html`, `screenshots/` (fictional data only), `icons/` (shared with the manifest — the only part of `docs/` that ships in the zip) |

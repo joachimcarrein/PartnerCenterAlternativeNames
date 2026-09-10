@@ -38,3 +38,33 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   return true; // keep the message channel open for the async sendResponse
 });
+
+// Toolbar badge for the degraded-data signal.
+// msg: { type: 'ALTNAME_HEALTH', level } — 'warn' shows '!', anything else
+// clears it. content.js sends a level, not a message: the wording lives in the
+// popup, and this only needs to know whether to raise the flag.
+//
+// A second listener is safe because the relay above returns false for anything
+// that is not PC_FETCH. This one never replies, so it returns false too.
+//
+// Tab-scoped, never global: the Microsoft tokens live in one tab's
+// sessionStorage, so the condition is per-tab, and a global badge would also
+// outlive the tab that earned it. Chrome resets tab-specific action state when
+// the tab navigates away, so there is nothing to clean up on exit.
+// #a4262c is the error red popup.html and content.js already use.
+chrome.runtime.onMessage.addListener((msg, sender) => {
+  if (!msg || msg.type !== 'ALTNAME_HEALTH') return false;
+
+  const tabId = sender && sender.tab && sender.tab.id;
+  if (typeof tabId !== 'number') return false; // not from a tab; nothing to badge
+
+  try {
+    chrome.action.setBadgeText({ text: msg.level === 'warn' ? '!' : '', tabId });
+    chrome.action.setBadgeBackgroundColor({ color: '#a4262c', tabId });
+  } catch (e) {
+    // The tab can close between the send and here; that is not an error worth
+    // surfacing anywhere the user would see it.
+    console.log('[Partner Center Alternative Names] badge update skipped:', e);
+  }
+  return false;
+});

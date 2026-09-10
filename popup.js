@@ -13,9 +13,12 @@
   const CACHE_KEY = 'domainCache';
   const DISPLAYNAME_KEY = 'displayNameCache';
   const EXPIRY_KEY = 'domainCacheExpiry';
+  const HEALTH_KEY = 'loadHealth'; // last-load facts written by content.js
   const NAV_SETTING_KEY = 'keepDefaultLinkBehaviour'; // default true; see content.js
   // Never add OVERRIDE_KEY to this list — rebuild must not touch custom names.
-  const CACHE_KEYS = [CACHE_KEY, DISPLAYNAME_KEY, EXPIRY_KEY];
+  // HEALTH_KEY does belong here: it is derived data with a server-side source
+  // of truth, so it must never be left describing a cache that was deleted.
+  const CACHE_KEYS = [CACHE_KEY, DISPLAYNAME_KEY, EXPIRY_KEY, HEALTH_KEY];
 
   const GDAP_URL_GLOB =
     'https://partner.microsoft.com/dashboard/v2/customers/granularadminaccess/*';
@@ -33,6 +36,10 @@
   const statusEl = document.getElementById('status');
   const fileInput = document.getElementById('file-input');
   const keepDefaultLinkChk = document.getElementById('chk-keep-default-link');
+  const healthEl = document.getElementById('health');
+  const healthHeadlineEl = document.getElementById('health-headline');
+  const healthDetailEl = document.getElementById('health-detail');
+  const healthHintEl = document.getElementById('health-hint');
 
   let pendingImportMode = null; // 'merge' | 'replace', set right before the picker opens
 
@@ -45,27 +52,208 @@
     statusEl.className = kind || '';
   }
 
-  function refreshStatus() {
-    chrome.storage.local.get([OVERRIDE_KEY, CACHE_KEY, DISPLAYNAME_KEY, EXPIRY_KEY], (result) => {
-      const overrides = (result && result[OVERRIDE_KEY]) || {};
-      const count = Object.keys(overrides).length;
-      overrideStatusEl.textContent =
-        count === 1 ? '1 alternative name stored' : count + ' alternative names stored';
+  /* ------------------------------------------------------------------ */
+  /* Health — turning content.js's facts into something to read         */
+  /* ------------------------------------------------------------------ */
+  //
+  // The judgement lives here and ONLY here. content.js records facts (counts,
+  // sources, a reason enum) and never a verdict or a user-facing string,
+  // because with no module system a verdict computed there and rendered here
+  // would need its wording in both files and would drift. Facts do not drift,
+  // and this way the testable part is the pure function.
 
-      const domains = (result && result[CACHE_KEY]) || {};
-      const names = (result && result[DISPLAYNAME_KEY]) || {};
-      const expiry = result && result[EXPIRY_KEY];
-      const domainCount = Object.keys(domains).length;
-      const nameCount = Object.keys(names).length;
+  // Plain words, no enum leaking into the UI.
+  const REASON_PHRASE = {
+    'no-token': 'the page did not provide a sign-in token',
+    auth: 'the sign-in token had expired',
+    network: 'the request could not be sent',
+    http: 'Microsoft’s API returned an error',
+    parse: 'Microsoft’s API returned something unexpected',
+  };
+  const REASON_HINT = {
+    'no-token': 'Refresh the Partner Center tab, then use Rebuild local cache.',
+    auth: 'Refresh the Partner Center tab, then use Rebuild local cache.',
+    network: 'Try Rebuild local cache.',
+    http: 'Try Rebuild local cache; Microsoft’s API may be having trouble.',
+    parse: 'Try Rebuild local cache; Microsoft’s API may be having trouble.',
+  };
 
-      if (!expiry || Date.now() >= expiry || (!domainCount && !nameCount)) {
-        cacheStatusEl.textContent = 'No cached data';
+  function reasonPhrase(reason) {
+    return REASON_PHRASE[reason] || 'the lookup did not complete';
+  }
+
+  function reasonHint(reason) {
+    return REASON_HINT[reason] || 'Try Rebuild local cache.';
+  }
+
+  function brokenHalf(half) {
+    return !!half && (half.source === 'failed' || half.source === 'partial');
+  }
+
+  // Used when BOTH halves are broken, where the detail has to say which is
+  // which because the headline cannot.
+  function halfSentence(label, half) {
+    if (half.source === 'partial') {
+      return label + ' loaded only partly (' + (half.count || 0) + ' so far) — ' +
+        reasonPhrase(half.reason) + '.';
+    }
+    return label + ' could not be loaded — ' + reasonPhrase(half.reason) + '.';
+  }
+
+  // Used when only ONE half is broken: the headline already named it, so the
+  // detail leads with the reason instead of repeating the headline verbatim.
+  function reasonSentence(half) {
+    const phrase = reasonPhrase(half.reason);
+    const lead = phrase.charAt(0).toUpperCase() + phrase.slice(1);
+    if (half.source === 'partial') return lead + ' — only ' + (half.count || 0) + ' arrived.';
+    return lead + '.';
+  }
+
+  // record: the stored loadHealth, or undefined on a fresh install.
+  // counts:  { domains, names } actually in the cache right now.
+  // -> { level, headline, detail, hint }, level 'ok' | 'pending' | 'warn' | 'unknown'.
+  //
+  // Two lines in here are deliberate and load-bearing:
+  //   - source 'fetch' with count 0 is a SUCCESS. A partner with no
+  //     delegated-admin customers legitimately has zero display names.
+  //   - an unresolved row while both halves succeeded is NOT a warning.
+  //     Non-transacted customers legitimately have neither a domain nor a
+  //     display name (constraint 5), and badging that would teach the user to
+  //     ignore the badge.
+  function assessHealth(record, counts) {
+    const stored = counts || {};
+    const storedLine =
+      'Currently stored: ' + (stored.domains || 0) + ' domain(s), ' +
+      (stored.names || 0) + ' display name(s).';
+
+    if (!record || !record.domains || !record.names) {
+      return {
+        level: 'unknown',
+        headline: 'No status yet — open the Partner Center page.',
+        detail: 'The result of the last data load is reported here.',
+        hint: '',
+      };
+    }
+
+    const rows = record.rows || {};
+    const injected = Number(rows.injected) || 0;
+    const resolved = Number(rows.resolved) || 0;
+    const rowLine =
+      injected && resolved < injected
+        ? 'Only ' + resolved + ' of ' + injected + ' rows on the last page showed a name.'
+        : '';
+
+    const badDomains = brokenHalf(record.domains);
+    const badNames = brokenHalf(record.names);
+
+    if (badDomains || badNames) {
+      const parts = [];
+      let headline;
+      if (badDomains && badNames) {
+        headline = 'No customer data could be loaded.';
+        parts.push(halfSentence('Customer domains', record.domains));
+        parts.push(halfSentence('Display names', record.names));
+      } else if (badNames) {
+        headline =
+          record.names.source === 'partial'
+            ? 'Display names could not be fully loaded.'
+            : 'Display names could not be loaded.';
+        parts.push(reasonSentence(record.names));
       } else {
-        cacheStatusEl.textContent =
-          domainCount + ' domain(s) / ' + nameCount + ' display name(s) cached · expires ' +
-          new Date(expiry).toLocaleDateString();
+        headline =
+          record.domains.source === 'partial'
+            ? 'Customer domains could not be fully loaded.'
+            : 'Customer domains could not be loaded.';
+        parts.push(reasonSentence(record.domains));
       }
-    });
+      if (rowLine) parts.push(rowLine);
+      parts.push(storedLine);
+      return {
+        level: 'warn',
+        headline,
+        detail: parts.join(' '),
+        hint: reasonHint(badNames ? record.names.reason : record.domains.reason),
+      };
+    }
+
+    // 'awaiting' is the transient case: the GDAP token often arrives after
+    // content.js has already looked for it. Never a warning — content.js
+    // escalates to 'failed' itself if it never turns up.
+    if (record.names.source === 'awaiting' || record.domains.source === 'awaiting') {
+      const which = record.names.source === 'awaiting' ? 'Display names' : 'Customer domains';
+      return {
+        level: 'pending',
+        headline: which + ' are still loading.',
+        detail:
+          'The Partner Center page has not handed over the sign-in detail this lookup ' +
+          'needs yet. It normally arrives within seconds of opening the page.',
+        hint: '',
+      };
+    }
+
+    const okParts = [storedLine];
+    if (rowLine) okParts.push(rowLine);
+    return { level: 'ok', headline: '', detail: okParts.join(' '), hint: '' };
+  }
+
+  // The compact form for the cache line — the banner is hidden when all is
+  // well, so this is what a healthy popup still shows.
+  function healthTag(record) {
+    if (!record || !record.domains || !record.names) return '';
+    const tags = [];
+    if (record.domains.source === 'failed') tags.push('domains failed');
+    else if (record.domains.source === 'partial') tags.push('domains incomplete');
+    if (record.names.source === 'failed') tags.push('display names failed');
+    else if (record.names.source === 'partial') tags.push('display names incomplete');
+    else if (record.names.source === 'awaiting') tags.push('display names still loading');
+    return tags.join(', ');
+  }
+
+  function renderHealth(record, counts) {
+    const verdict = assessHealth(record, counts);
+    // Hidden entirely when everything is fine: a permanent "all good" box is a
+    // box nobody reads, which would defeat the point of having one at all.
+    if (verdict.level === 'ok') {
+      healthEl.hidden = true;
+      return verdict;
+    }
+    healthEl.hidden = false;
+    healthEl.className = 'panel ' + verdict.level;
+    healthHeadlineEl.textContent = verdict.headline;
+    healthDetailEl.textContent = verdict.detail;
+    healthHintEl.textContent = verdict.hint;
+    return verdict;
+  }
+
+  function refreshStatus() {
+    chrome.storage.local.get(
+      [OVERRIDE_KEY, CACHE_KEY, DISPLAYNAME_KEY, EXPIRY_KEY, HEALTH_KEY],
+      (result) => {
+        const overrides = (result && result[OVERRIDE_KEY]) || {};
+        const count = Object.keys(overrides).length;
+        overrideStatusEl.textContent =
+          count === 1 ? '1 alternative name stored' : count + ' alternative names stored';
+
+        const domains = (result && result[CACHE_KEY]) || {};
+        const names = (result && result[DISPLAYNAME_KEY]) || {};
+        const expiry = result && result[EXPIRY_KEY];
+        const domainCount = Object.keys(domains).length;
+        const nameCount = Object.keys(names).length;
+        const record = result && result[HEALTH_KEY];
+
+        if (!expiry || Date.now() >= expiry || (!domainCount && !nameCount)) {
+          cacheStatusEl.textContent = 'No cached data';
+        } else {
+          const tag = healthTag(record);
+          cacheStatusEl.textContent =
+            domainCount + ' domain(s) / ' + nameCount + ' display name(s) cached' +
+            (tag ? ' · ' + tag : '') +
+            ' · expires ' + new Date(expiry).toLocaleDateString();
+        }
+
+        renderHealth(record, { domains: domainCount, names: nameCount });
+      }
+    );
   }
 
   /* ------------------------------------------------------------------ */
@@ -265,6 +453,57 @@
   /* Cache rebuild                                                      */
   /* ------------------------------------------------------------------ */
 
+  function rebuildHalf(label, half) {
+    if (half.partial) {
+      return label + ' only partly loaded (' + (half.count || 0) + ') — ' + reasonPhrase(half.reason);
+    }
+    return label + ' failed (' + reasonPhrase(half.reason) + ')';
+  }
+
+  // The 2.1.1 mis-report itself, fixed. A rebuild whose display-name half had
+  // hard-failed used to report a green "Cache rebuilt — 71 domain(s),
+  // 0 name(s)." — indistinguishable from a partner who genuinely has no
+  // delegated-admin customers. Now a failed half is named, and never 'ok'.
+  // -> { message, kind }
+  function describeRebuild(result) {
+    // No per-half facts: a malformed reply, or a content script older than
+    // 2.2.0 (which answered with the maps themselves). Nothing is known about
+    // what happened, so claim neither success nor a specific failure.
+    if (
+      !result ||
+      !result.domains ||
+      !result.names ||
+      typeof result.domains.ok !== 'boolean' ||
+      typeof result.names.ok !== 'boolean'
+    ) {
+      return {
+        message: 'Cache cleared, but the rebuild result could not be read — refresh the Partner Center tab.',
+        kind: 'err',
+      };
+    }
+    const d = result.domains;
+    const n = result.names;
+    if (d.ok && n.ok) {
+      return {
+        message: 'Cache rebuilt — ' + d.count + ' domain(s), ' + n.count + ' name(s).',
+        kind: 'ok',
+      };
+    }
+    if (!d.ok && !n.ok) {
+      return {
+        message:
+          'Rebuild failed — ' + rebuildHalf('customer domains', d) + '; ' +
+          rebuildHalf('display names', n) + '.',
+        kind: 'err',
+      };
+    }
+    const parts = [
+      d.ok ? d.count + ' domain(s)' : rebuildHalf('customer domains', d),
+      n.ok ? n.count + ' name(s)' : rebuildHalf('display names', n),
+    ];
+    return { message: 'Cache rebuilt — ' + parts.join('; ') + '.', kind: 'err' };
+  }
+
   function doRebuild() {
     setStatus('Rebuilding…', '');
     chrome.storage.local.remove(CACHE_KEYS, () => {
@@ -282,17 +521,8 @@
             refreshStatus();
             return;
           }
-          if (!response.ok) {
-            setStatus(
-              'Cache cleared, but the refetch failed — sign in again on the Partner Center page and refresh.',
-              'err'
-            );
-            refreshStatus();
-            return;
-          }
-          const domainCount = response.domains ? Object.keys(response.domains).length : 0;
-          const nameCount = response.names ? Object.keys(response.names).length : 0;
-          setStatus('Cache rebuilt — ' + domainCount + ' domain(s), ' + nameCount + ' name(s).', 'ok');
+          const described = describeRebuild(response);
+          setStatus(described.message, described.kind);
           refreshStatus();
         });
       });
@@ -341,6 +571,14 @@
 
   keepDefaultLinkChk.addEventListener('change', () => {
     chrome.storage.local.set({ [NAV_SETTING_KEY]: keepDefaultLinkChk.checked });
+  });
+
+  // The record can change while the popup is open, and the 15s grace window
+  // escalating 'awaiting' to 'failed' is exactly that: open the popup during
+  // the amber "still loading" phase and without this it would sit there
+  // saying so long after the load had actually failed.
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === 'local' && changes[HEALTH_KEY]) refreshStatus();
   });
 
   document.getElementById('btn-export').addEventListener('click', doExport);
