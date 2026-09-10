@@ -4,12 +4,15 @@
 # so this is deliberately just "check out, install Node, run the tests" — no
 # npm install, no cache, no lockfile.
 #
-# Node >= 21 is required: the documented command passes a *quoted* glob and
-# lets Node expand it (so the identical command works in PowerShell and bash),
-# and --test only gained glob support in Node 21. `lts/*` is comfortably past
-# that. The "no tests discovered" guard below exists because a Node that could
-# not expand the glob would otherwise run zero tests and still report success,
-# which is worse than having no workflow at all.
+# Both actions are pinned to v5: v4 targets Node 20, which GitHub deprecated on
+# the runners (they get force-run on Node 24 and emit a warning on every run).
+#
+# Node >= 21 is required for the test command itself: it passes a *quoted*
+# glob and lets Node expand it, so the identical command works in PowerShell
+# and bash — and --test only gained glob support in Node 21. `lts/*` is
+# comfortably past that. The "no tests discovered" guard below exists because a
+# Node that could not expand the glob would otherwise run zero tests and still
+# report success, which is worse than having no workflow at all.
 name: Tests
 
 on:
@@ -23,9 +26,9 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: lts/*
 
