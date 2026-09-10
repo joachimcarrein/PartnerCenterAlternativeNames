@@ -33,14 +33,16 @@ try {
     # is intentionally excluded. The icons live under docs/icons so the GitHub
     # Pages site can reference the same files; the manifest points there too,
     # so the zip must contain them at that same relative path — nothing else
-    # from docs/ ships.
+    # from docs/ ships. manifest.json stays at the archive root because Chrome
+    # reads it from the root of the folder it loads; the runtime code sits
+    # under src/ exactly as the manifest references it.
     $include = @(
         "manifest.json",
-        "background.js",
-        "content.js",
-        "search-inject.js",
-        "popup.html",
-        "popup.js",
+        "src/background.js",
+        "src/content.js",
+        "src/search-inject.js",
+        "src/popup.html",
+        "src/popup.js",
         "docs/icons"
     )
 

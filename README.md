@@ -35,7 +35,7 @@ Only your custom names are ever exported — the domain cache isn't, since it's 
 1. Download or clone this repository.
 2. Open `chrome://extensions` in Chrome.
 3. Enable **Developer mode** (top right).
-4. Click **Load unpacked** and select this folder (the one containing `manifest.json`).
+4. Click **Load unpacked** and select this folder (the repo root — the one containing `manifest.json`, not `src/`).
 5. Open the Partner Center GDAP page:
    `https://partner.microsoft.com/dashboard/v2/customers/granularadminaccess/list`
 
@@ -51,17 +51,17 @@ After changing any extension file, click the **reload** (↻) icon on the extens
 ./build.ps1
 ```
 
-This produces `dist/partner-center-alternative-names-<version>.zip` containing only `manifest.json`, `background.js`, `content.js`, `search-inject.js`, `popup.html`, `popup.js`, and `docs/icons/` — nothing else. The icons live under `docs/` so the GitHub Pages site can use the same files; the manifest references them there, so they keep that path inside the zip.
+This produces `dist/partner-center-alternative-names-<version>.zip` containing only `manifest.json`, `src/background.js`, `src/content.js`, `src/search-inject.js`, `src/popup.html`, `src/popup.js`, and `docs/icons/` — nothing else. The icons live under `docs/` so the GitHub Pages site can use the same files; the manifest references them there, so they keep that path inside the zip.
 
 ## Project structure
 
 | File | Purpose |
 |------|---------|
 | `manifest.json` | MV3 manifest — permissions, host access, content scripts, toolbar popup |
-| `content.js` | Isolated-world content script — column injection, data fetching, caching, editing |
-| `search-inject.js` | `MAIN`-world script — rewrites the search `$filter` to make custom names searchable |
-| `background.js` | Service worker — relays authenticated API calls (bypasses content-script CORS) |
-| `popup.html` / `popup.js` | Toolbar popup — export/import of custom labels, on-demand cache rebuild, full reset |
+| `src/content.js` | Isolated-world content script — column injection, data fetching, caching, editing |
+| `src/search-inject.js` | `MAIN`-world script — rewrites the search `$filter` to make custom names searchable |
+| `src/background.js` | Service worker — relays authenticated API calls (bypasses content-script CORS) |
+| `src/popup.html` / `src/popup.js` | Toolbar popup — export/import of custom labels, on-demand cache rebuild, full reset |
 | `docs/icons/` | Extension icons (also used by the GitHub Pages site) |
 | `build.ps1` | Packs the extension into a versioned zip |
 | `.plan/` | Development notes / change history |

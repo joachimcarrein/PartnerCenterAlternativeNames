@@ -67,7 +67,7 @@ async function loadContent({
   const doc = fakeDocument(grid);
   const win = fakeWindow();
   const sandbox = loadIife(
-    'content.js',
+    'src/content.js',
     {
       chrome,
       document: doc,

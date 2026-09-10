@@ -9,7 +9,7 @@
     "128": "docs/icons/icon128.png"
   },
   "action": {
-    "default_popup": "popup.html",
+    "default_popup": "src/popup.html",
     "default_title": "Partner Center Alternative Names",
     "default_icon": {
       "16": "docs/icons/icon16.png",
@@ -24,14 +24,14 @@
     "https://api.partnercustomersecurity.microsoft.com/*"
   ],
   "background": {
-    "service_worker": "background.js"
+    "service_worker": "src/background.js"
   },
   "content_scripts": [
     {
       "matches": [
         "https://partner.microsoft.com/dashboard/v2/customers/granularadminaccess/*"
       ],
-      "js": ["search-inject.js"],
+      "js": ["src/search-inject.js"],
       "run_at": "document_start",
       "world": "MAIN"
     },
@@ -39,7 +39,7 @@
       "matches": [
         "https://partner.microsoft.com/dashboard/v2/customers/granularadminaccess/*"
       ],
-      "js": ["content.js"],
+      "js": ["src/content.js"],
       "run_at": "document_idle"
     }
   ]

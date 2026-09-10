@@ -40,7 +40,7 @@ function load({ store = {}, fileText = null, fileSize = 10, readerFails = false 
   const chrome = fakeChrome(store);
   const doc = fakeDocument();
   const sandbox = loadIife(
-    'popup.js',
+    'src/popup.js',
     {
       chrome,
       document: doc,
