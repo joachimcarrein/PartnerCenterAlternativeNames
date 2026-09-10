@@ -15,8 +15,21 @@
 # report success, which is worse than having no workflow at all.
 name: Tests
 
+# Triggers. `pull_request` is the real gate: it checks out the *merge* commit
+# (head merged into base), which is the state that will actually land on main.
+# `push` is narrowed to main so a feature-branch push does NOT also run the
+# suite — two check runs both named "test" would both match the ruleset's
+# required check, and the last one to report would decide a split result. The
+# main-branch run is kept so main's own history carries a green/red signal and
+# a direct push (ruleset disabled, or a bypass) is still checked.
+#
+# This narrowing is also what rules out a workflow that opens PRs with
+# GITHUB_TOKEN: GitHub suppresses the `pull_request` event for those, so such a
+# PR would carry no test check at all and could never satisfy the ruleset.
+# Deliberate trade-off — PRs are opened by hand.
 on:
   push:
+    branches: [main]
   pull_request:
 
 permissions:
