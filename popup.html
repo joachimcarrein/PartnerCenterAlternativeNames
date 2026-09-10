@@ -86,10 +86,49 @@
   .checkbox-row input {
     margin: 2px 0 0;
   }
+  /* Degraded-load banner. Hidden whenever the level is 'ok' — a permanent
+     "all good" box is a box nobody reads. Same palette as #status below:
+     #a4262c for an error, #8a6d00 amber for something still in flight. */
+  #health {
+    margin: 0 0 12px;
+    padding: 8px 10px;
+    border: 1px solid #d6d6d6;
+    border-radius: 4px;
+    background: #f6f6f6;
+    color: #555;
+  }
+  #health.warn {
+    border-color: #d8a7ac;
+    background: #fdf0f1;
+    color: #a4262c;
+  }
+  #health.pending {
+    border-color: #e3cf9a;
+    background: #fdf7e6;
+    color: #8a6d00;
+  }
+  .panel-headline {
+    font-weight: 600;
+  }
+  .panel-detail,
+  .panel-hint {
+    margin-top: 4px;
+    font-size: 11px;
+  }
+  .panel-hint:empty,
+  .panel-detail:empty {
+    margin-top: 0;
+  }
 </style>
 </head>
 <body>
   <h1>Partner Center Alternative Names</h1>
+
+  <div id="health" class="panel" hidden>
+    <div class="panel-headline" id="health-headline"></div>
+    <div class="panel-detail" id="health-detail"></div>
+    <div class="panel-hint" id="health-hint"></div>
+  </div>
 
   <section>
     <h2>Customer name click</h2>

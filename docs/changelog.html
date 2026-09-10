@@ -151,6 +151,14 @@
   <h1 class="page-title">Changelog</h1>
   <p class="subtag">All notable changes to the extension, newest first.</p>
 
+  <h2 id="v2-2-0">Version 2.2.0 <span class="date">10 September 2026</span></h2>
+  <ul>
+    <li>The extension now <strong>tells you when part of the customer data could not be loaded</strong>, instead of quietly showing &quot;Unknown&quot;. The toolbar icon gets a small <strong>!</strong> and the popup explains which part failed, why, and what to do about it.</li>
+    <li><strong>Rebuild local cache</strong> now reports honestly when only part of the rebuild worked, instead of showing a success message.</li>
+    <li>A customer showing &quot;Unknown&quot; because a lookup failed now says so on hover, so you can tell it apart from a customer that genuinely has no name to show.</li>
+    <li>Your own custom names are never affected by any of this.</li>
+  </ul>
+
   <h2 id="v2-1-1">Version 2.1.1 <span class="date">10 September 2026</span></h2>
   <ul>
     <li>Fixed customers showing <strong>&quot;Unknown&quot;</strong> in the Alternative Name column instead of a name. Partner Center stopped leaving behind the sign-in detail the extension used to look up the fallback name, so no names were loaded at all; the extension now picks that up from the page&#39;s own request instead.</li>

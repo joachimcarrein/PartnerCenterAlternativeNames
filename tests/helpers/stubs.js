@@ -6,17 +6,22 @@
  */
 'use strict';
 
-/* A fake element that swallows anything popup.js does to it and records the
- * handlers it registers, so a test can fire them. */
+/* A fake element that swallows anything popup.js or content.js does to it and
+ * records the handlers it registers, so a test can fire them. `dataset` and
+ * the querySelector pair are what content.js's cell rendering touches. */
 function fakeElement(id) {
   return {
     id,
     textContent: '',
     className: '',
+    title: '',
     checked: false,
+    hidden: false,
     href: '',
     download: '',
     value: '',
+    dataset: {},
+    children: [],
     handlers: {},
     addEventListener(type, fn) {
       (this.handlers[type] = this.handlers[type] || []).push(fn);
@@ -25,37 +30,167 @@ function fakeElement(id) {
       for (const fn of this.handlers.click || []) fn();
     },
     remove() {},
-    appendChild() {},
+    appendChild(child) {
+      this.children.push(child);
+      return child;
+    },
+    insertAdjacentElement(_where, child) {
+      this.children.push(child);
+      return child;
+    },
+    querySelector: () => null,
+    querySelectorAll: () => [],
+    setAttribute() {},
+    getAttribute: () => null,
   };
 }
 
 /* document.getElementById returns a stable fake per id, so a test can reach
- * the same element the module captured at load time. */
-function fakeDocument() {
+ * the same element the module captured at load time. querySelectorAll returns
+ * nothing, which is what makes content.js's findGrid() give up cleanly instead
+ * of relying on its try/catch. */
+function fakeDocument(gridShadowRoot) {
   const els = new Map();
   const get = (id) => {
     if (!els.has(id)) els.set(id, fakeElement(id));
     return els.get(id);
   };
-  return {
+  // content.js's findGrid() walks querySelectorAll('*') looking for a tag name
+  // containing DATA-GRID, then recurses into shadow roots. Pass a shadow root
+  // to make the walk succeed; omit it and findGrid() gives up, which is what
+  // most tests want.
+  const gridHost = gridShadowRoot
+    ? { tagName: 'CUSTOMERSVCADMIN_HE-DATA-GRID', shadowRoot: gridShadowRoot }
+    : null;
+  const doc = {
     elements: els,
+    gridHost,
     getElementById: get,
     createElement: (tag) => fakeElement('created:' + tag),
     body: fakeElement('body'),
+    handlers: {},
+    addEventListener(type, fn) {
+      (doc.handlers[type] = doc.handlers[type] || []).push(fn);
+    },
+    querySelector: () => null,
+    querySelectorAll: () => (gridHost ? [gridHost] : []),
+  };
+  return doc;
+}
+
+/* A grid shadow root with `count` real rows, for content.js's injectRows().
+ * Row ids are row-<uuid>; ids from `skeleton` are added verbatim so a test can
+ * check they are skipped (the real grid renders row-he-row-0 and friends for
+ * ~700ms before the data swaps in — constraint 7). */
+function fakeShadowRoot(tenantIds = [], skeleton = []) {
+  const rows = [...tenantIds.map((id) => 'row-' + id), ...skeleton].map((id) => {
+    const el = fakeElement(id);
+    el.id = id;
+    return el;
+  });
+  return {
+    rows,
+    querySelector: () => null,
+    /* Only the row selector matches; the [id^="cell-tenantDomain-"] lookup in
+     * refreshRowText() gets nothing, so cells are never double-counted. */
+    querySelectorAll: (sel) => (String(sel).indexOf('tr[role="row"]') === 0 ? rows : []),
+    appendChild() {},
+  };
+}
+
+/* sessionStorage with just getItem, holding the two Microsoft tokens in the
+ * shapes content.js reads. `auth` fills AuthContextData's nested
+ * tokenMetadata.accountsFirstPartyApp.accessToken; `gdap` is the flat
+ * CustomerSvcAdminKey. Either can be false to simulate a missing token, which
+ * is the whole point of the health signal. */
+function fakeSessionStorage({ auth = true, gdap = true } = {}) {
+  const store = {};
+  if (auth) {
+    store.AuthContextData = JSON.stringify({
+      tokenMetadata: { accountsFirstPartyApp: { accessToken: 'fake-pc-token' } },
+    });
+  }
+  if (gdap) store.CustomerSvcAdminKey = 'fake-gdap-token';
+  return {
+    store,
+    getItem: (key) => (key in store ? store[key] : null),
+    setItem: (key, value) => {
+      store[key] = String(value);
+    },
+  };
+}
+
+/* setTimeout/clearTimeout that record instead of scheduling.
+ *
+ * Not a convenience: content.js schedules a 10-deep 500ms waitForGrid retry
+ * chain and a 15s display-name grace timer the moment it loads, and real
+ * timers would keep the test process alive for both. Recording them also makes
+ * the grace escalation testable — fire(15000) instead of waiting 15 seconds. */
+function fakeTimers() {
+  const timers = new Map();
+  let nextId = 1;
+  return {
+    timers,
+    setTimeout(fn, delay) {
+      const id = nextId++;
+      timers.set(id, { fn, delay: Number(delay) || 0 });
+      return id;
+    },
+    clearTimeout(id) {
+      timers.delete(id);
+    },
+    /* Delays currently scheduled, for asserting a timer was (or was not) set. */
+    pending() {
+      return [...timers.values()].map((t) => t.delay);
+    },
+    /* Fire every timer registered with exactly this delay, oldest first. */
+    fire(delay) {
+      let fired = 0;
+      for (const [id, t] of [...timers]) {
+        if (t.delay !== delay) continue;
+        timers.delete(id);
+        t.fn();
+        fired++;
+      }
+      return fired;
+    },
   };
 }
 
 /* chrome.storage.local over a plain object, with the same callback style the
  * real API uses. `store` is live — a test can read/mutate it directly. */
 function fakeChrome(store = {}, opts = {}) {
-  const calls = { set: [], remove: [], clear: 0, sendMessage: [], query: [] };
+  const calls = {
+    get: [],
+    set: [],
+    remove: [],
+    clear: 0,
+    sendMessage: [],
+    query: [],
+    // chrome.runtime.sendMessage — content.js uses it both for the PC_FETCH
+    // relay and for the badge, so a test can assert on either.
+    runtimeMessages: [],
+    onMessage: [],
+    onChanged: [],
+  };
   return {
     store,
     calls,
     runtime: {
       lastError: opts.lastError || null,
-      getManifest: () => ({ version: opts.version || '2.1.1' }),
-      sendMessage: (msg, cb) => cb && cb({ ok: true }),
+      getManifest: () => ({ version: opts.version || '2.2.0' }),
+      /* opts.onRuntimeMessage(msg) supplies the reply, which is how a test
+       * feeds fake API responses to content.js's bgFetch(). Returning
+       * undefined is the "no listener replied" case bgFetch also handles. */
+      sendMessage: (msg, cb) => {
+        calls.runtimeMessages.push(msg);
+        const reply =
+          typeof opts.onRuntimeMessage === 'function' ? opts.onRuntimeMessage(msg) : { ok: true };
+        if (cb) cb(reply);
+      },
+      onMessage: {
+        addListener: (fn) => calls.onMessage.push(fn),
+      },
     },
     tabs: {
       query: (q, cb) => {
@@ -70,6 +205,7 @@ function fakeChrome(store = {}, opts = {}) {
     storage: {
       local: {
         get: (keys, cb) => {
+          calls.get.push([].concat(keys));
           const out = {};
           for (const k of [].concat(keys)) if (k in store) out[k] = store[k];
           cb(out);
@@ -90,7 +226,13 @@ function fakeChrome(store = {}, opts = {}) {
           cb && cb();
         },
       },
+      onChanged: {
+        addListener: (fn) => calls.onChanged.push(fn),
+      },
     },
+    // content.js only ever sets a badge through the worker, so nothing here
+    // needs chrome.action — that half is not testable and is on the live-test
+    // checklist in .plan/2.2.0.md instead.
   };
 }
 
@@ -166,6 +308,9 @@ module.exports = {
   plain,
   fakeElement,
   fakeDocument,
+  fakeShadowRoot,
+  fakeSessionStorage,
+  fakeTimers,
   fakeChrome,
   fakeFileReader,
   fakeWindow,

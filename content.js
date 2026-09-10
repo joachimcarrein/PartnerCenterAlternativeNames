@@ -26,6 +26,7 @@
   const DISPLAYNAME_KEY = 'displayNameCache';
   const OVERRIDE_KEY = 'nameOverrides'; // user-set custom names; never expires
   const EXPIRY_KEY = 'domainCacheExpiry';
+  const HEALTH_KEY = 'loadHealth'; // last-load facts; see the health section below
   const NAV_SETTING_KEY = 'keepDefaultLinkBehaviour'; // default true; see popup.html
   const CACHE_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
   const LIST_URL = 'https://api.partnercenter.microsoft.com/v1/customers?size=300';
@@ -53,6 +54,18 @@
   // which the page no longer reliably writes. Never persisted — it is as
   // short-lived as the sessionStorage one.
   let bridgeGdapToken = null;
+
+  // Facts about the most recent load — counts, sources and a reason enum, and
+  // nothing else. content.js records facts; popup.js owns the single
+  // assessHealth() that turns them into a level and a user-facing message.
+  // With no module system, a verdict computed here and rendered there would
+  // need its wording duplicated in both files and would drift; facts do not.
+  // Deliberately holds no tenant IDs, domains, display names or tokens — only
+  // counts, booleans, an epoch timestamp and the reason enum. Never exported.
+  let healthRecord = null;
+  // Signature of what was last written, so an injection pass on every
+  // debounced mutation does not become a storage write on every mutation.
+  let healthSig = null;
 
   /* ------------------------------------------------------------------ */
   /* Shadow DOM traversal                                               */
@@ -175,6 +188,166 @@
         names ? Object.keys(names).length : '(unchanged)', 'names; expires',
         new Date(payload[EXPIRY_KEY]).toISOString());
     });
+  }
+
+  /* ------------------------------------------------------------------ */
+  /* Health record — what the last load actually got                    */
+  /* ------------------------------------------------------------------ */
+  //
+  // 2.1.1 degraded 7 of every 10 rows to "Unknown" while reporting success,
+  // and nothing anywhere said so. These are the facts that let the popup and
+  // the toolbar badge say it instead: what was attempted, what came back, and
+  // how many rows resolved. No verdicts, no user-facing strings.
+
+  // Booleans only, never the token values — same contract as the debug
+  // helper's getTokenStatus().
+  function tokenStatus() {
+    let partnerCenter = false;
+    let gdapKey = false;
+    try {
+      partnerCenter = !!sessionStorage.getItem('AuthContextData');
+      gdapKey = !!sessionStorage.getItem('CustomerSvcAdminKey');
+    } catch (e) {
+      dbg('tokenStatus: sessionStorage unreadable', e);
+    }
+    return { partnerCenter, gdap: gdapKey || !!bridgeGdapToken };
+  }
+
+  function emptyHealth() {
+    return {
+      at: 0,
+      domains: { source: 'awaiting', count: 0, reason: null },
+      names: { source: 'awaiting', count: 0, reason: null },
+      rows: { injected: 0, resolved: 0 },
+      tokens: { partnerCenter: false, gdap: false },
+    };
+  }
+
+  function brokenHalf(half) {
+    return !!half && (half.source === 'failed' || half.source === 'partial');
+  }
+
+  // Facts for one half of the load, derived from a fetch result object.
+  // awaitingOnNoToken is for the names half only: content.js runs at
+  // document_idle, but the GDAP token exists only once the page itself has
+  // called that API, so "no token" at first load usually means not-yet-arrived
+  // rather than broken. Reporting that as 'failed' would badge a healthy page;
+  // startNamesGrace() below is what eventually calls it a failure.
+  function halfFacts(result, awaitingOnNoToken) {
+    let source;
+    if (result.partial) source = 'partial';
+    else if (result.ok) source = 'fetch';
+    else if (awaitingOnNoToken && result.reason === 'no-token') source = 'awaiting';
+    else source = 'failed';
+    return { source, count: result.count, reason: result.reason };
+  }
+
+  // `at` is deliberately NOT part of the signature. Include it and every call
+  // differs from the last, the dedupe never fires, and an injection pass on
+  // every debounced mutation (scroll, page, search) becomes a storage write.
+  // The cost is that `at` means "when this state was first observed" rather
+  // than "when it was last checked" — the more useful of the two, since it
+  // dates the problem and not the poll.
+  function healthSignature(h) {
+    return [
+      h.domains.source, h.domains.count, h.domains.reason || '-',
+      h.names.source, h.names.count, h.names.reason || '-',
+      h.rows.injected, h.rows.resolved,
+    ].join('|');
+  }
+
+  // Only the badge's on/off — popup.js owns the wording and the finer levels
+  // ('pending' for a half still arriving, 'unknown' for a fresh install). The
+  // one judgement the two files share is this: a half that failed or came back
+  // partial is a warning, and an unresolved row on its own is not (constraint
+  // 5 — non-transacted customers legitimately have no domain and no display
+  // name, so badging that would train the user to ignore the badge).
+  function badgeLevel(h) {
+    return brokenHalf(h.domains) || brokenHalf(h.names) ? 'warn' : 'ok';
+  }
+
+  // chrome.action isn't reachable from a content script, so the worker owns
+  // the badge. It may be asleep and there is nothing useful to do about that,
+  // so lastError is read and dropped.
+  function sendBadge(level) {
+    try {
+      chrome.runtime.sendMessage({ type: 'ALTNAME_HEALTH', level }, () => {
+        void chrome.runtime.lastError;
+      });
+    } catch (e) {
+      dbg('Badge message failed:', e);
+    }
+  }
+
+  // Merges `patch` into the current record and persists it, but only when the
+  // signature changed. Returns true when it wrote. The badge is driven from
+  // here and nowhere else, so it can never disagree with what the popup reads
+  // back out of storage.
+  function writeHealth(patch) {
+    const base = healthRecord || emptyHealth();
+    const next = {
+      at: base.at,
+      domains: Object.assign({}, base.domains, patch && patch.domains),
+      names: Object.assign({}, base.names, patch && patch.names),
+      rows: Object.assign({}, base.rows, patch && patch.rows),
+      tokens: tokenStatus(),
+    };
+    const sig = healthSignature(next);
+    if (healthRecord && sig === healthSig) return false;
+    next.at = Date.now();
+    healthRecord = next;
+    healthSig = sig;
+    chrome.storage.local.set({ [HEALTH_KEY]: next }, () => dbg('Health recorded:', sig));
+    sendBadge(badgeLevel(next));
+    return true;
+  }
+
+  // True when the names half is known to have failed, so a placeholder in a
+  // cell means "could not find out" rather than "there is nothing to show".
+  // The cell text stays 'Unknown' on purpose: a fourth placeholder would
+  // ripple into PLACEHOLDERS, beginEdit()'s is-this-a-real-value test and
+  // applyEdit()'s equal-to-natural comparison, for a distinction a tooltip
+  // carries at zero risk.
+  function namesLookupFailed() {
+    return !!healthRecord && brokenHalf(healthRecord.names);
+  }
+
+  // 'no-token' on the names half is reported as 'awaiting' (see halfFacts),
+  // but if the page never calls the GDAP API again the token never arrives and
+  // a genuinely broken state would sit quietly at 'pending' forever. So
+  // escalate once, after a grace window, unless a recovery got there first.
+  //
+  // 15s is a guess, written down as one: the grid's own data comes from that
+  // same API, so the token should be captured at page load, well before
+  // document_idle. The live test must confirm this never fires on a healthy
+  // page — if it does, the number moves, not the design.
+  const NAMES_GRACE_MS = 15000;
+  let namesGraceTimer = null;
+
+  function startNamesGrace() {
+    if (namesGraceTimer) return;
+    namesGraceTimer = setTimeout(() => {
+      namesGraceTimer = null;
+      if (displayNameMap.size) return; // recovered while we waited
+      if (!healthRecord || healthRecord.names.source !== 'awaiting') return;
+      dbg('Grace window elapsed with no GDAP token — escalating to failed.');
+      writeHealth({ names: { source: 'failed', count: 0, reason: 'no-token' } });
+      // The cells were rendered while the half was still 'awaiting', so they
+      // carry no degraded tooltip yet, and on an idle page no grid mutation
+      // will ever come to re-render them. Every other path that writes health
+      // (rebuildCache, maybeRecoverDisplayNames) re-renders after doing so;
+      // this one used to be the exception, and the tooltip simply never
+      // appeared. Found by live-testing 2.2.0, not by any unit test.
+      const g = findGrid(document);
+      if (g && g.shadowRoot) injectColumn(g.shadowRoot);
+    }, NAMES_GRACE_MS);
+  }
+
+  function cancelNamesGrace() {
+    if (namesGraceTimer) {
+      clearTimeout(namesGraceTimer);
+      namesGraceTimer = null;
+    }
   }
 
   /* ------------------------------------------------------------------ */
@@ -426,11 +599,33 @@
     }
   }
 
+  // Both list fetchers answer with a result object instead of "data or null",
+  // which collapsed five different outcomes into one:
+  //
+  //   { ok, data, count, partial, reason, pages }
+  //     ok      - the request sequence completed. count may be 0, which is a
+  //               legitimate answer for a partner with no customers of that
+  //               kind, NOT a failure. Collapsing those two is what makes a
+  //               badge cry wolf.
+  //     partial - some pages arrived, then one failed; data holds what arrived
+  //     reason  - null when ok && !partial, otherwise how it failed:
+  //               'no-token' | 'auth' | 'network' | 'http' | 'parse'
+  function fetchResult(data, pages, reason, partial) {
+    const out = data || {};
+    return {
+      ok: !reason,
+      data: out,
+      count: Object.keys(out).length,
+      partial: !!partial,
+      reason: reason || null,
+      pages: pages || 0,
+    };
+  }
+
   // Fetch every customer across all continuation pages.
-  // Returns a plain object { tenantId: domain } or null on failure.
   async function fetchAllDomains() {
     const token = getToken();
-    if (!token) return null;
+    if (!token) return fetchResult(null, 0, 'no-token');
 
     const out = {};
     let continuationToken = null;
@@ -447,17 +642,20 @@
       if (continuationToken) headers['MS-ContinuationToken'] = continuationToken;
 
       const resp = await bgFetch(LIST_URL, headers);
+      // A failure on page 2+ keeps what already arrived and flags it partial:
+      // showing some domains beats showing none. It is still not `ok`, so
+      // loadDomainData() renders it without letting it become the cache.
       if (!resp.ok) {
         dbg('Network error fetching customers (via background):', resp.error);
-        return null;
+        return fetchResult(out, page, 'network', page > 0);
       }
       if (resp.status === 401) {
         dbg('API error 401 Unauthorized — token expired/invalid. Retry on next visit.');
-        return null;
+        return fetchResult(out, page, 'auth', page > 0);
       }
       if (!resp.statusOk) {
         dbg('API error status', resp.status, 'body:', (resp.body || '').slice(0, 300));
-        return null;
+        return fetchResult(out, page, 'http', page > 0);
       }
 
       let data;
@@ -465,7 +663,7 @@
         data = JSON.parse(resp.body);
       } catch (e) {
         dbg('API error: failed to parse JSON', e);
-        return null;
+        return fetchResult(out, page, 'parse', page > 0);
       }
 
       const items = Array.isArray(data && data.items) ? data.items : [];
@@ -479,7 +677,7 @@
     } while (continuationToken);
 
     dbg('Fetch complete:', Object.keys(out).length, 'domains across', page, 'page(s).');
-    return out;
+    return fetchResult(out, page);
   }
 
   // On-demand single-customer fallback for a tenant not in the map.
@@ -554,10 +752,12 @@
   }
 
   // Fetch the GDAP customer list (display names). Follows OData @odata.nextLink.
-  // Returns { tenantId: displayName } or null on failure.
+  // Same result object as fetchAllDomains(). Its loop used to break on failure
+  // and hand back the partial data as if it were complete — which then got
+  // cached for 30 days as authoritative. Now it says which it is.
   async function fetchDisplayNames() {
     const token = getGdapToken();
-    if (!token) return null;
+    if (!token) return fetchResult(null, 0, 'no-token');
 
     const out = {};
     let url = GDAP_URL;
@@ -568,22 +768,22 @@
       const resp = await bgFetch(url, headers);
       if (!resp.ok) {
         dbg('GDAP network error (via background):', resp.error);
-        break;
+        return fetchResult(out, page, 'network', page > 0);
       }
       if (resp.status === 401) {
-        dbg('GDAP 401 — CustomerSvcAdminKey expired/invalid.');
-        break;
+        dbg('GDAP 401 — the GDAP token expired/invalid.');
+        return fetchResult(out, page, 'auth', page > 0);
       }
       if (!resp.statusOk) {
         dbg('GDAP error status', resp.status, 'body:', (resp.body || '').slice(0, 300));
-        break;
+        return fetchResult(out, page, 'http', page > 0);
       }
       let data;
       try {
         data = JSON.parse(resp.body);
       } catch (e) {
         dbg('GDAP error: failed to parse JSON', e);
-        break;
+        return fetchResult(out, page, 'parse', page > 0);
       }
       const items = Array.isArray(data && data.value) ? data.value : [];
       for (const c of items) recordDisplayName(out, c);
@@ -592,8 +792,11 @@
       url = data && data['@odata.nextLink'] ? data['@odata.nextLink'] : null;
     }
 
+    // No `? out : null` any more: a partner with no delegated-admin customers
+    // legitimately has zero display names, and reporting that as a failure is
+    // exactly the false alarm a badge must not raise.
     dbg('GDAP fetch complete:', Object.keys(out).length, 'display names across', page, 'page(s).');
-    return Object.keys(out).length ? out : null;
+    return fetchResult(out, page);
   }
 
   // A usable GDAP token can arrive *after* loadDomainData() already gave up on
@@ -608,13 +811,19 @@
     if (recoveringDisplayNames || loadState === 'pending' || displayNameMap.size) return;
     recoveringDisplayNames = true;
     try {
-      const names = await fetchDisplayNames();
-      if (names && Object.keys(names).length) {
-        displayNameMap = new Map(Object.entries(names));
-        // Names-only write; writeCache leaves the domain half untouched.
-        writeCache(null, names);
+      const r = await fetchDisplayNames();
+      if (r.count) {
+        displayNameMap = new Map(Object.entries(r.data));
+        // Names-only write; writeCache leaves the domain half untouched. Only
+        // a complete result is allowed to become the cache — a partial one
+        // renders but is never persisted (see loadDomainData()).
+        if (r.ok) writeCache(null, r.data);
         loadState = 'ready';
         dbg('Display names recovered via the bridged token:', displayNameMap.size);
+      }
+      if (r.ok || r.partial) cancelNamesGrace();
+      writeHealth({ names: halfFacts(r, true) });
+      if (r.count) {
         const g = findGrid(document);
         if (g && g.shadowRoot) injectColumn(g.shadowRoot);
       }
@@ -627,26 +836,36 @@
   // have any data to show. Domains and display names are tracked independently
   // so a prior failed GDAP fetch (empty names) self-heals on the next load
   // instead of staying blank until the 30-day cache expires.
+  //
+  // Records what each half actually came from before returning: 71 domains and
+  // zero names is not a success, and 2.1.1 shipped exactly that while
+  // reporting 'ready' — the return value below still says "there is something
+  // to show", which is a different question from "did it all work".
   async function loadDomainData() {
     const cached = await readCache();
     let domains = cached.domains;
     let names = cached.displayNames;
-    let changed = false;
+    let domainFacts = { source: 'cache', count: domains ? Object.keys(domains).length : 0, reason: null };
+    let nameFacts = { source: 'cache', count: names ? Object.keys(names).length : 0, reason: null };
+    // Only a COMPLETE fetch may become the cached truth. A partial result is
+    // still shown (some domains beat none) but never persisted: a
+    // half-populated half frozen under the 30-day TTL is the same failure mode
+    // as the {} poisoning fixed in 2.1.1, one step further on.
+    let freshDomains = null;
+    let freshNames = null;
 
     if (!domains) {
-      const fresh = await fetchAllDomains();
-      if (fresh && Object.keys(fresh).length) {
-        domains = fresh;
-        changed = true;
-      }
+      const r = await fetchAllDomains();
+      domainFacts = halfFacts(r, false);
+      if (r.count) domains = r.data;
+      if (r.ok && r.count) freshDomains = r.data;
     }
     // (Re)fetch display names whenever we don't have any cached.
     if (!names) {
-      const fetched = await fetchDisplayNames();
-      if (fetched && Object.keys(fetched).length) {
-        names = fetched;
-        changed = true;
-      }
+      const r = await fetchDisplayNames();
+      nameFacts = halfFacts(r, true);
+      if (r.count) names = r.data;
+      if (r.ok && r.count) freshNames = r.data;
     }
 
     if (domains) domainMap = new Map(Object.entries(domains));
@@ -655,32 +874,53 @@
 
     // Only rewrite (and reset the expiry) when we fetched something new, so a
     // pure cache hit still lets the 30-day TTL drive a domain refresh.
-    if (changed && (domainMap.size || displayNameMap.size)) {
-      writeCache(domains || {}, names || {});
-    }
+    if (freshDomains || freshNames) writeCache(freshDomains, freshNames);
     publishAltIndex();
+    writeHealth({ domains: domainFacts, names: nameFacts });
+    if (nameFacts.source === 'awaiting') startNamesGrace();
     return domainMap.size > 0 || displayNameMap.size > 0;
   }
 
   // Discards nothing itself — the caller (debug helper or the popup's rebuild
   // message handler) owns clearing the cache keys first. Refetches domains
-  // and display names from Microsoft and writes them. ok is false only when
-  // BOTH fetches came back empty (e.g. expired tokens); a partial result
-  // (domains but no names, or vice versa) is still reported as a success with
-  // the real counts, so the caller can show exactly what was rebuilt.
+  // and display names from Microsoft and writes them.
+  //
+  // `ok` is true only when BOTH halves completed. It used to be
+  // `!!(fresh || names)`, which is exactly how a rebuild whose display-name
+  // half hard-failed still reported a green "Cache rebuilt — 71 domain(s),
+  // 0 name(s)." The per-half facts go back to the popup, which owns the
+  // wording; counts rather than the maps themselves, since the popup only
+  // ever counted them.
   async function rebuildCache() {
-    const [fresh, names] = await Promise.all([fetchAllDomains(), fetchDisplayNames()]);
-    if (fresh) domainMap = new Map(Object.entries(fresh));
-    if (names) displayNameMap = new Map(Object.entries(names));
-    const ok = !!(fresh || names);
-    if (ok) {
-      writeCache(fresh || {}, names || {});
+    const [domainsR, namesR] = await Promise.all([fetchAllDomains(), fetchDisplayNames()]);
+    if (domainsR.count) domainMap = new Map(Object.entries(domainsR.data));
+    if (namesR.count) displayNameMap = new Map(Object.entries(namesR.data));
+    // Complete halves only — a partial result renders but is never cached.
+    writeCache(domainsR.ok ? domainsR.data : null, namesR.ok ? namesR.data : null);
+
+    const domainFacts = halfFacts(domainsR, false);
+    const nameFacts = halfFacts(namesR, true);
+    // Written before the re-render below, so the cells' degraded tooltips and
+    // the row tally injectRows() records both see the new state.
+    writeHealth({ domains: domainFacts, names: nameFacts });
+    if (nameFacts.source === 'awaiting') startNamesGrace();
+    else cancelNamesGrace();
+
+    if (domainMap.size || displayNameMap.size) {
       loadState = 'ready';
       publishAltIndex();
       const g = findGrid(document);
       if (g && g.shadowRoot) injectColumn(g.shadowRoot);
     }
-    return { ok, domains: fresh || {}, names: names || {} };
+    return {
+      ok: domainsR.ok && namesR.ok,
+      domains: {
+        ok: domainsR.ok, count: domainsR.count, partial: domainsR.partial, reason: domainsR.reason,
+      },
+      names: {
+        ok: namesR.ok, count: namesR.count, partial: namesR.partial, reason: namesR.reason,
+      },
+    };
   }
 
   // Popup messages. ALTNAME_REBUILD_CACHE: popup already cleared the cache
@@ -703,6 +943,13 @@
       domainMap = new Map();
       displayNameMap = new Map();
       loadState = 'pending';
+      // Storage (loadHealth included) is already wiped by the popup, so this
+      // only resets the in-memory record and drops the badge — no leftover '!'
+      // on a toolbar that now describes nothing.
+      healthRecord = null;
+      healthSig = null;
+      cancelNamesGrace();
+      sendBadge('ok');
       publishAltIndex();
       const g = findGrid(document);
       if (g && g.shadowRoot) injectColumn(g.shadowRoot);
@@ -721,6 +968,11 @@
 
   // The auto-derived value (ignoring user overrides). Priority:
   // real domain > GDAP displayName > '—'/Unknown. All shown in normal style.
+  //
+  // `degraded` marks a placeholder the extension could not resolve *because a
+  // lookup failed*, as opposed to a customer that legitimately has neither a
+  // domain nor a display name (constraint 5). Only the tooltip changes; the
+  // text stays as it was — see namesLookupFailed().
   function naturalInfoForTenant(tenantId) {
     if (loadState === 'pending') return { text: 'Loading...' };
     const key = String(tenantId).toLowerCase();
@@ -728,8 +980,9 @@
     if (domain && domain.length) return { text: domain };
     const name = displayNameMap.get(key);
     if (name && name.length) return { text: name };
-    if (loadState === 'failed') return { text: '—' }; // tokens/network failed, nothing cached
-    return { text: 'Unknown' };
+    const degraded = namesLookupFailed();
+    if (loadState === 'failed') return { text: '—', degraded }; // nothing cached either
+    return { text: 'Unknown', degraded };
   }
 
   // What to actually show: a user override wins over the derived value.
@@ -764,7 +1017,9 @@
   function renderCell(span, tenantId) {
     if (span.dataset.editing === '1') return;
     const info = effectiveInfoForTenant(tenantId);
-    const sig = (info.custom ? 'c:' : 'p:') + info.text;
+    // `degraded` belongs in the signature: the tooltip has to appear when the
+    // health record changes even though the cell's text does not.
+    const sig = (info.custom ? 'c:' : 'p:') + (info.degraded ? 'd:' : '') + info.text;
     if (span.dataset.rendered === sig) return;
     span.dataset.rendered = sig;
     span.textContent = '';
@@ -773,6 +1028,7 @@
     value.className = 'altname-value';
     value.textContent = info.text;
     if (info.custom) value.title = 'Custom name (set by you)';
+    else if (info.degraded) value.title = 'Display-name lookup failed — open the extension popup.';
     value.addEventListener('dblclick', (e) => {
       e.stopPropagation();
       beginEdit(span, tenantId);
@@ -898,10 +1154,22 @@
 
   function injectRows(shadowRoot) {
     const rows = shadowRoot.querySelectorAll('tr[role="row"]:not(#column-header)');
+    // Row tally for the health record, counted before the already-injected
+    // guard below so it covers every real row on this pass and not only the
+    // new ones. This is the number that actually matters: "3 of 10 rows showed
+    // a name" needs no knowledge of the extension's internals to be alarming,
+    // and it is the only signal that does not depend on guessing an expected
+    // total — the two APIs cover different, overlapping customer populations,
+    // so measuring names against domains would be a misleading denominator.
+    let seen = 0;
+    let resolved = 0;
     for (const row of rows) {
       if (!row.id || row.id.indexOf('row-') !== 0) continue;
       const tenantId = row.id.replace('row-', '');
       if (!UUID_RE.test(tenantId)) continue; // skip skeleton/placeholder rows
+
+      seen++;
+      if (PLACEHOLDERS.indexOf(effectiveInfoForTenant(tenantId).text) === -1) resolved++;
 
       const cellId = 'cell-tenantDomain-' + tenantId;
       if (row.querySelector('#' + CSS.escape(cellId))) continue; // already injected
@@ -934,6 +1202,14 @@
         });
       }
     }
+
+    // Skipped while the load is still in flight: every row reads "Loading..."
+    // then, so recording 0 of 10 would be a lie for the ~1s before data lands.
+    // Skipped for an empty pass too (a search that matched nothing), which
+    // would otherwise overwrite a real tally with 0 of 0. refreshRowText()
+    // does not repeat this — the tally comes from state rather than the DOM,
+    // so a second pass over the same rows computes identical numbers.
+    if (loadState !== 'pending' && seen) writeHealth({ rows: { injected: seen, resolved } });
   }
 
   // Refresh text in already-injected cells (e.g. domains arrived after injection).
@@ -1001,8 +1277,11 @@
 
     // Expose debug helpers for DevTools inspection.
     window._tenantDomainDebug = {
-      getCache: () => chrome.storage.local.get([CACHE_KEY, DISPLAYNAME_KEY, EXPIRY_KEY]),
-      clearCache: () => chrome.storage.local.remove([CACHE_KEY, DISPLAYNAME_KEY, EXPIRY_KEY]),
+      getCache: () => chrome.storage.local.get([CACHE_KEY, DISPLAYNAME_KEY, EXPIRY_KEY, HEALTH_KEY]),
+      // Same key list the popup's rebuild clears: loadHealth is derived data
+      // and must never be left describing a cache that has been deleted.
+      // OVERRIDE_KEY stays out of it — it has no server-side source of truth.
+      clearCache: () => chrome.storage.local.remove([CACHE_KEY, DISPLAYNAME_KEY, EXPIRY_KEY, HEALTH_KEY]),
       getMap: () => domainMap,
       getNameMap: () => displayNameMap,
       getOverrides: () => overrideMap,
@@ -1015,6 +1294,9 @@
       },
       rebuildCache,
       getAltIndex: () => buildAltIndex(),
+      // The facts the popup and the badge are both driven from. Counts,
+      // sources, a reason enum and booleans — no customer data of any kind.
+      getHealth: () => healthRecord,
       // Booleans only — never expose the token values themselves.
       getTokenStatus: () => ({
         authContext: !!sessionStorage.getItem('AuthContextData'),
