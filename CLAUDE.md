@@ -98,14 +98,14 @@ Only `nameOverrides` is ever exported — never the domain cache (it's derived, 
 ## Testing
 
 ```powershell
-node --test "tests/**/*.test.js"   # 42 assertions, ~0.15s
+node --test "tests/**/*.test.js"   # 60 assertions, ~0.15s
 ```
 
 **Quote the glob and never pass the bare directory** — `node --test tests` fails with `MODULE_NOT_FOUND`, because the runner resolves the directory as an entry point instead of discovering test files inside it. Node expands the quoted glob itself, so the identical command works in PowerShell and bash. The `*.test.js` suffix is also what keeps `tests/helpers/` out of the run: Node otherwise treats *every* file under a directory named `tests` as a test file.
 
 Zero dependencies — `node:test` and `node:assert` are built into Node, so there is still no `package.json` and no `node_modules`. Nothing under `tests/` ships either: `build.ps1` packs from an explicit allowlist, so a new directory (`tests/`, `.github/`) is excluded by default rather than needing a blacklist entry.
 
-**CI runs the suite on every pull request, and on pushes to `main`** — `.github/workflows/tests.yml`, the repo's only workflow (GitHub Pages is deployed from the `docs/` folder via repo settings, not a workflow, so this does not touch it). The `main` ruleset requires a passing check named **`test`** — that is the *job* id, not the workflow name (`Tests`); GitHub renders the pair as "Tests / test". Four details in there are load-bearing; do not "tidy" them away:
+**CI runs the suite on every pull request, and on pushes to `main`** — `.github/workflows/tests.yml`, one of the repo's two workflows (the other is `release.yml`; GitHub Pages is deployed from the `docs/` folder via repo settings, not a workflow, so neither touches it). The `main` ruleset requires a passing check named **`test`** — that is the *job* id, not the workflow name (`Tests`); GitHub renders the pair as "Tests / test". Four details in there are load-bearing; do not "tidy" them away:
 
 - **`set -o pipefail` is mandatory.** The run pipes through `tee`, and without pipefail `tee`'s exit code masks a failing test — CI reports green while assertions fail. Verified both ways.
 - **The "no tests discovered" guard is not paranoia.** A Node too old to expand the quoted glob would run zero tests and still exit 0, which is worse than having no workflow. The guard greps the summary line for a non-zero test count.
@@ -129,6 +129,15 @@ Zero dependencies — `node:test` and `node:assert` are built into Node, so ther
 
 `build.ps1` packs from an **explicit allowlist** (`manifest.json`, `background.js`, `content.js`, `search-inject.js`, `popup.html`, `popup.js`, `docs/icons/`). Nothing else ships — do not rely on directory sweeps. **Icons deliberately live inside `docs/`** so the GitHub Pages site can reference the same files without a copy; the manifest points at `docs/icons/…` and the build preserves that relative path inside the zip (Chrome is fine with subfolder icon paths). The rest of `docs/` (HTML pages, screenshots) must never ship. Bump `version` in `manifest.json` for each release, **and add a matching entry to `docs/changelog.html` in the same change** (see Repository conventions).
 
+### Releasing
+
+Releases are automatic: **bumping `version` in `manifest.json` and merging to `main` publishes a GitHub release.** `.github/workflows/release.yml` reads the version from the manifest, and if no `v<version>` release exists yet it runs the test suite, runs `build.ps1`, extracts that version's changelog entry as the release notes, and publishes `v<version>` with the zip attached. There is nothing to tag by hand.
+
+- **The gate is "does the release exist", not "did the manifest change in this push"** — so the workflow is idempotent and safe to re-run (`workflow_dispatch`), and a squash merge touching the manifest cannot double-publish.
+- **A missing changelog entry fails the release.** `tools/changelog-notes.js` throws when `docs/changelog.html` has no `<h2 id="vX-Y-Z">` for the manifest version, so the "changelog is mandatory" convention below is enforced mechanically rather than remembered. It also refuses an entry with no `<li>` bullets, so an empty release note can never be published.
+- **It runs the suite itself.** `tests.yml` runs on the same push but in a separate workflow whose result `release.yml` cannot see, so without its own test step a red suite would not stop a release.
+- **`windows-latest`, deliberately.** `build.ps1` is portable pwsh, but Windows is where it is developed and verified, the artifact has to load in Chrome, and Windows runner minutes are free on a public repo — there is nothing to buy by risking a differently-built archive. The workflow verifies `manifest.json` and `docs/icons/icon16.png` sit at those exact paths inside the zip, because `Compress-Archive` nesting a wrapper folder (or mangling the separators) would produce a zip Chrome rejects.
+
 To test: load unpacked at `chrome://extensions` (Developer mode). After editing any file, click the extension's **reload (↻)** icon, then refresh the Partner Center page — refreshing the page alone runs the old build.
 
 ## Repository conventions
@@ -136,7 +145,7 @@ To test: load unpacked at `chrome://extensions` (Developer mode). After editing 
 - **Vanilla JS, no dependencies, no transpile.** Keep it that way; match the existing IIFE + `dbg()` style and comment density.
 - **`.plan/`** holds the change history / prompts. It must contain **only fictional sample data** (Acme, Contoso, Northwind, `a1b2c3d4-…` tenant IDs, `*.onmicrosoft.com`). **Never commit real customer data** — tenant GUIDs, customer/company names, or customer domains — anywhere in this public repo, including code comments and screenshots. Screenshots must use the same fictional data.
 - **`docs/` is the public GitHub Pages site** (served at `https://joachimcarrein.github.io/PartnerCenterAlternativeNames/`): `index.html` (overview), `changelog.html`, `privacy.html`, plus `docs/screenshots/` and `docs/icons/` (Pages only serves the `docs/` folder, which is why screenshots and icons live there — the icons are shared with the extension manifest, see Building). All three pages share the same inline CSS + theme-toggle boilerplate; keep them visually in sync when styling changes.
-- **Changelog is mandatory per release:** every `manifest.json` version bump gets a new entry at the **top** of `docs/changelog.html` (`Version X.Y.Z <span class="date">D Month YYYY</span>` + a short `<ul>`). Keep bullets user-facing and brief — what changed for the user, not implementation detail. Never rewrite history for already-released versions; add, don't edit.
+- **Changelog is mandatory per release, and CI enforces it:** every `manifest.json` version bump gets a new entry at the **top** of `docs/changelog.html` (`Version X.Y.Z <span class="date">D Month YYYY</span>` + a short `<ul>`). Keep bullets user-facing and brief — what changed for the user, not implementation detail. Never rewrite history for already-released versions; add, don't edit. The entry *is* the release notes — `release.yml` publishes it verbatim (see Releasing), and fails the release if it is missing or has no bullets. The `<h2 id="vX-Y-Z">` anchor and the `<span class="date">` are both parsed, so keep that markup shape.
 - **Privacy policy** is `docs/privacy.html`, linked from the store listing and `README.md`.
 - **A bug fix is a release.** Every confirmed bug gets all four of: the code change, a `version` bump in `manifest.json`, a changelog entry, and a `.plan/<version>.md` write-up (Status / Symptom / Evidence / Root cause / the fix / what was deliberately *not* fixed / Verification / files-touched table). State plainly in the Status line whether the fix was live-tested against the real Partner Center app or only inspected.
 - **Write tests when the change is testable, and say so when it is not.** Any change to pure logic — cache semantics, validation, parsing, filter/URL rewriting, precedence rules — gets assertions under `tests/` in the *same* change. When a fix is genuinely untestable (DOM injection, an external API contract, token plumbing), say so explicitly in the `.plan/` entry instead of passing over the question in silence.
@@ -154,5 +163,7 @@ To test: load unpacked at `chrome://extensions` (Developer mode). After editing 
 | `background.js` | `PC_FETCH` relay for authenticated cross-origin API calls |
 | `popup.html` / `popup.js` | Toolbar popup: "Keep default link behaviour" toggle, export/import `nameOverrides` as JSON, trigger a cache rebuild, or clear everything |
 | `build.ps1` | Packs the runtime files into a versioned zip |
-| `tests/` | `node --test` suites (zero dependencies, never shipped): `popup-import.test.js`, `search-inject-filter.test.js`, plus `helpers/load-iife.js` (vm loader for the IIFE files) and `helpers/stubs.js` (DOM / `chrome.*` / bridge fakes) |
+| `tools/` | CI tooling, never shipped: `changelog-notes.js` turns a `docs/changelog.html` entry into Markdown release notes (`node tools/changelog-notes.js <version>`). Not an IIFE — it is not a shipped file, so it uses a normal `module.exports` |
+| `.github/workflows/` | `tests.yml` (the suite, on PRs and pushes to `main`) and `release.yml` (publishes `v<version>` with the zip when the manifest version is new) |
+| `tests/` | `node --test` suites (zero dependencies, never shipped): `popup-import.test.js`, `search-inject-filter.test.js`, `changelog-notes.test.js`, plus `helpers/load-iife.js` (vm loader for the IIFE files) and `helpers/stubs.js` (DOM / `chrome.*` / bridge fakes) |
 | `docs/` | Public GitHub Pages site: `index.html` (overview), `changelog.html` (update on every release), `privacy.html`, `screenshots/` (fictional data only), `icons/` (shared with the manifest — the only part of `docs/` that ships in the zip) |

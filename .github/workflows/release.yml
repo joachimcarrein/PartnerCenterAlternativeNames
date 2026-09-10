@@ -1,0 +1,133 @@
+# Publishes a GitHub release when a new version reaches main.
+#
+# "New" means: the version in manifest.json has no `v<version>` release yet.
+# That check, rather than "did manifest.json change in this push", makes the
+# workflow idempotent — it can be re-run, and a squash merge that touches the
+# manifest twice still produces exactly one release.
+#
+# Runs on windows-latest on purpose. build.ps1 is portable pwsh and would very
+# likely work on ubuntu, but Windows is the environment the script is written
+# and verified in, and the artifact here is a zip that has to load in Chrome.
+# Windows runner minutes are free on a public repo, so there is nothing to buy
+# by risking a subtly different archive.
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write # create the tag, the release, and upload the zip
+
+# Never let two releases race for the same tag.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: lts/*
+
+      # tests.yml runs on this same push, but in a separate workflow whose
+      # result this one cannot see — so a red suite there would not stop a
+      # release here. Re-run the suite as a gate. Same command CLAUDE.md
+      # documents, not a CI-only variant.
+      - name: Run tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --test "tests/**/*.test.js" | tee test-output.txt
+          if ! grep -qE 'tests [1-9][0-9]*$' test-output.txt; then
+            echo "::error::No tests were discovered. Check the glob and the Node version."
+            exit 1
+          fi
+
+      - name: Read the version from manifest.json
+        id: manifest
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = (Get-Content manifest.json -Raw | ConvertFrom-Json).version
+          if (-not $version) { throw "manifest.json has no 'version' field." }
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          Write-Host "manifest version: $version"
+
+      - name: Is v${{ steps.manifest.outputs.version }} already released?
+        id: gate
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: v${{ steps.manifest.outputs.version }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "release=false" >> "$GITHUB_OUTPUT"
+            echo "$TAG already exists — nothing to release."
+          else
+            echo "release=true" >> "$GITHUB_OUTPUT"
+            echo "$TAG does not exist yet — will release."
+          fi
+
+      # Fails the run when the changelog entry is missing, which is the point:
+      # CLAUDE.md requires an entry per version bump, and this makes that
+      # mechanical instead of a habit. Runs before the build so the failure is
+      # about the missing entry, not a stray artifact.
+      - name: Extract the release notes from docs/changelog.html
+        if: steps.gate.outputs.release == 'true'
+        shell: bash
+        env:
+          VERSION: ${{ steps.manifest.outputs.version }}
+        run: |
+          set -euo pipefail
+          node tools/changelog-notes.js "$VERSION" > release-notes.md
+          echo "--- release-notes.md ---"
+          cat release-notes.md
+
+      - name: Build the zip
+        if: steps.gate.outputs.release == 'true'
+        shell: pwsh
+        run: ./build.ps1
+
+      # build.ps1 stages into a temp dir precisely so the manifest lands at the
+      # archive root rather than inside a wrapper folder; Chrome rejects the
+      # zip otherwise. Verify that actually happened, and that the icon paths
+      # kept their forward slashes.
+      - name: Verify the archive layout
+        if: steps.gate.outputs.release == 'true'
+        shell: pwsh
+        env:
+          VERSION: ${{ steps.manifest.outputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $zipPath = "dist/partner-center-alternative-names-$env:VERSION.zip"
+          if (-not (Test-Path $zipPath)) { throw "build.ps1 produced no $zipPath" }
+          $zip = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path $zipPath))
+          try { $names = $zip.Entries | ForEach-Object { $_.FullName } } finally { $zip.Dispose() }
+          Write-Host ($names -join "`n")
+          foreach ($required in @('manifest.json', 'content.js', 'docs/icons/icon16.png')) {
+            if ($names -notcontains $required) {
+              throw "The zip is missing '$required' at that exact path. Entries: $($names -join ', ')"
+            }
+          }
+          Write-Host "Archive layout OK ($($names.Count) entries)."
+
+      - name: Create the release
+        if: steps.gate.outputs.release == 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: v${{ steps.manifest.outputs.version }}
+          VERSION: ${{ steps.manifest.outputs.version }}
+        run: |
+          set -euo pipefail
+          gh release create "$TAG" \
+            --title "$TAG" \
+            --notes-file release-notes.md \
+            "dist/partner-center-alternative-names-$VERSION.zip"
+          echo "Published $TAG"
