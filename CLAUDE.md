@@ -95,6 +95,25 @@ Only `nameOverrides` is ever exported — never the domain cache (it's derived, 
 
 `content.js` exposes `window._tenantDomainDebug` in the page for DevTools inspection: `getCache()`, `clearCache()`, `getMap()`, `getNameMap()`, `getOverrides()`, `clearOverrides()`, `rebuildCache()`, `getAltIndex()`, `exportOverrides()`, `importOverrides(data, mode)`. Both scripts log under `[AltName]` / `[AltName/net]` when their `DEBUG` flag is on.
 
+## Testing
+
+```powershell
+node --test "tests/**/*.test.js"   # 42 assertions, ~0.15s
+```
+
+**Quote the glob and never pass the bare directory** — `node --test tests` fails with `MODULE_NOT_FOUND`, because the runner resolves the directory as an entry point instead of discovering test files inside it. Node expands the quoted glob itself, so the identical command works in PowerShell and bash. The `*.test.js` suffix is also what keeps `tests/helpers/` out of the run: Node otherwise treats *every* file under a directory named `tests` as a test file.
+
+Zero dependencies — `node:test` and `node:assert` are built into Node, so there is still no `package.json` and no `node_modules`. Nothing under `tests/` ships either: `build.ps1` packs from an explicit allowlist, so a new directory is excluded by default rather than needing a blacklist entry.
+
+**How tests reach the code.** Every runtime file is a bare `(() => { ... })()` exporting nothing, and it must stay that way — do **not** add `module.exports` footers to shipped files. (`search-inject.js` runs in the page's MAIN world, where a stray global `module` left by Partner Center's own bundler could make such a footer do something unintended.) Instead `tests/helpers/load-iife.js` strips the IIFE wrapper and runs the body in a `node:vm` context, with stub globals from `tests/helpers/stubs.js`. Two rules when extending it:
+
+- Top-level `function` declarations become properties of the context's global object even under `'use strict'`, so they come out for free. Top-level `const`/`let` do **not** — they stay lexical, so ask for them via the `expose` snippet argument, which is appended to the same source string and therefore shares that scope.
+- Inject **host** globals only. A fresh vm context already owns its own ECMAScript intrinsics; layering the outer realm's `Object`/`Array` on top mixes realms and makes `instanceof` unreliable inside the module. For the same reason, compare vm-created objects using `plain()` from `stubs.js` — `deepStrictEqual` otherwise rejects them as "same structure but not reference-equal".
+
+**What is covered** (details in `.plan/2.1.1.tests.md`): `popup.js` export/import — `nameOverrides` is the only storage key with no server-side source of truth, so a bug there loses data permanently — and `search-inject.js`'s `$filter` rewriter, where every limit in constraint 6 is load-bearing and fails silently.
+
+**What is deliberately not covered:** Shadow DOM traversal, column injection and the MutationObserver. That needs jsdom (a dependency), and its shadow-root/slot fidelity would not match Partner Center's real markup, so such tests would exercise the fixture rather than reality. Anything hitting the Microsoft APIs is out too. Know the limit of unit tests here: the 2.1.1 GDAP-token bug was an external contract change, and **no test could have caught it** — only a live check against the real page does.
+
 ## Building & loading
 
 ```powershell
@@ -112,6 +131,10 @@ To test: load unpacked at `chrome://extensions` (Developer mode). After editing 
 - **`docs/` is the public GitHub Pages site** (served at `https://joachimcarrein.github.io/PartnerCenterAlternativeNames/`): `index.html` (overview), `changelog.html`, `privacy.html`, plus `docs/screenshots/` and `docs/icons/` (Pages only serves the `docs/` folder, which is why screenshots and icons live there — the icons are shared with the extension manifest, see Building). All three pages share the same inline CSS + theme-toggle boilerplate; keep them visually in sync when styling changes.
 - **Changelog is mandatory per release:** every `manifest.json` version bump gets a new entry at the **top** of `docs/changelog.html` (`Version X.Y.Z <span class="date">D Month YYYY</span>` + a short `<ul>`). Keep bullets user-facing and brief — what changed for the user, not implementation detail. Never rewrite history for already-released versions; add, don't edit.
 - **Privacy policy** is `docs/privacy.html`, linked from the store listing and `README.md`.
+- **A bug fix is a release.** Every confirmed bug gets all four of: the code change, a `version` bump in `manifest.json`, a changelog entry, and a `.plan/<version>.md` write-up (Status / Symptom / Evidence / Root cause / the fix / what was deliberately *not* fixed / Verification / files-touched table). State plainly in the Status line whether the fix was live-tested against the real Partner Center app or only inspected.
+- **Write tests when the change is testable, and say so when it is not.** Any change to pure logic — cache semantics, validation, parsing, filter/URL rewriting, precedence rules — gets assertions under `tests/` in the *same* change. When a fix is genuinely untestable (DOM injection, an external API contract, token plumbing), say so explicitly in the `.plan/` entry instead of passing over the question in silence.
+- **New tests must be mutation-tested.** A suite that passes on its first run proves nothing. Break the code each test is meant to protect (invert the guard, raise the cap, delete the unescaping), confirm the test fails, then restore the file and verify it byte-identical with `cmp` plus `node --check`. Record the mutations and their results in the `.plan/` entry.
+- **Always run the full suite before reporting a change as done** — `node --test "tests/**/*.test.js"`, not merely the file you touched — and quote the real pass/fail counts. Never report work complete on the strength of inspection alone when a suite exists. If a test fails, say so with the output rather than describing the change as finished.
 
 ## File map
 
@@ -123,4 +146,5 @@ To test: load unpacked at `chrome://extensions` (Developer mode). After editing 
 | `background.js` | `PC_FETCH` relay for authenticated cross-origin API calls |
 | `popup.html` / `popup.js` | Toolbar popup: "Keep default link behaviour" toggle, export/import `nameOverrides` as JSON, trigger a cache rebuild, or clear everything |
 | `build.ps1` | Packs the runtime files into a versioned zip |
+| `tests/` | `node --test` suites (zero dependencies, never shipped): `popup-import.test.js`, `search-inject-filter.test.js`, plus `helpers/load-iife.js` (vm loader for the IIFE files) and `helpers/stubs.js` (DOM / `chrome.*` / bridge fakes) |
 | `docs/` | Public GitHub Pages site: `index.html` (overview), `changelog.html` (update on every release), `privacy.html`, `screenshots/` (fictional data only), `icons/` (shared with the manifest — the only part of `docs/` that ships in the zip) |
