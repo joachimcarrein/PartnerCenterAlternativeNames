@@ -48,6 +48,11 @@
   // explicit opt-in (checked in the popup) to keep the original behaviour
   // (name click -> Admin relationships).
   let keepDefaultLinkBehaviour = false;
+  // GDAP bearer token captured from the page's own request by search-inject.js
+  // and handed over the bridge. Fallback for the sessionStorage key below,
+  // which the page no longer reliably writes. Never persisted — it is as
+  // short-lived as the sessionStorage one.
+  let bridgeGdapToken = null;
 
   /* ------------------------------------------------------------------ */
   /* Shadow DOM traversal                                               */
@@ -119,33 +124,55 @@
   /* Caching                                                            */
   /* ------------------------------------------------------------------ */
 
-  // Resolves to { domains, displayNames } or null on miss/expiry.
+  // An empty object is NOT cached data. A failed fetch must never be able to
+  // persist {} and have it read back as an authoritative "there are zero
+  // domains" — that froze the whole column at Unknown for the full 30-day TTL
+  // and survived page reloads, because {} is truthy. Both halves are gated on
+  // content, not just presence.
+  function nonEmpty(obj) {
+    return obj && typeof obj === 'object' && Object.keys(obj).length ? obj : null;
+  }
+
+  // Resolves to { domains, displayNames }; either half is null when it is
+  // missing or empty, and both are null once the shared expiry has passed.
+  // The halves are independent so a failure on one side refetches only that
+  // side on the next load instead of waiting out the TTL.
   function readCache() {
     return new Promise((resolve) => {
       chrome.storage.local.get([CACHE_KEY, DISPLAYNAME_KEY, EXPIRY_KEY], (result) => {
-        const domains = result && result[CACHE_KEY];
-        const displayNames = (result && result[DISPLAYNAME_KEY]) || {};
         const expiry = result && result[EXPIRY_KEY];
-        if (!domains || !expiry || Date.now() >= expiry) {
-          dbg('Cache MISS (missing or expired).');
-          resolve(null);
+        if (!expiry || Date.now() >= expiry) {
+          dbg('Cache MISS (no expiry, or expired).');
+          resolve({ domains: null, displayNames: null });
           return;
         }
-        dbg('Cache HIT.', Object.keys(domains).length, 'domains,',
-          Object.keys(displayNames).length, 'names; expires', new Date(expiry).toISOString());
+        const domains = nonEmpty(result && result[CACHE_KEY]);
+        const displayNames = nonEmpty(result && result[DISPLAYNAME_KEY]);
+        dbg('Cache read:', domains ? Object.keys(domains).length : 0, 'domains,',
+          displayNames ? Object.keys(displayNames).length : 0, 'names; expires',
+          new Date(expiry).toISOString());
         resolve({ domains, displayNames });
       });
     });
   }
 
+  // Writes only the halves it was actually given. A caller whose fetch failed
+  // passes null/{} for that half, which must leave the stored half alone
+  // rather than overwrite it with {} — see nonEmpty() above.
   function writeCache(domainObj, displayNameObj) {
+    const domains = nonEmpty(domainObj);
+    const names = nonEmpty(displayNameObj);
+    if (!domains && !names) {
+      dbg('writeCache skipped — both halves empty, keeping what is stored.');
+      return;
+    }
     const payload = {};
-    payload[CACHE_KEY] = domainObj || {};
-    payload[DISPLAYNAME_KEY] = displayNameObj || {};
+    if (domains) payload[CACHE_KEY] = domains;
+    if (names) payload[DISPLAYNAME_KEY] = names;
     payload[EXPIRY_KEY] = Date.now() + CACHE_TTL_MS;
     chrome.storage.local.set(payload, () => {
-      dbg('Cached', Object.keys(payload[CACHE_KEY]).length, 'domains and',
-        Object.keys(payload[DISPLAYNAME_KEY]).length, 'names; expires',
+      dbg('Cached', domains ? Object.keys(domains).length : '(unchanged)', 'domains and',
+        names ? Object.keys(names).length : '(unchanged)', 'names; expires',
         new Date(payload[EXPIRY_KEY]).toISOString());
     });
   }
@@ -267,6 +294,13 @@
   window.addEventListener('message', (e) => {
     if (e.source !== window || !e.data || e.data[BRIDGE] !== true) return;
     if (e.data.kind === 'REQUEST_INDEX') publishAltIndex();
+    // search-inject.js sniffed the GDAP token off the page's own request.
+    if (e.data.kind === 'GDAP_TOKEN' && typeof e.data.payload === 'string' && e.data.payload) {
+      const isNew = e.data.payload !== bridgeGdapToken;
+      bridgeGdapToken = e.data.payload;
+      dbg('GDAP token received over the bridge. Prefix:', bridgeGdapToken.slice(0, 12));
+      if (isNew) maybeRecoverDisplayNames();
+    }
   });
 
   /* ------------------------------------------------------------------ */
@@ -484,20 +518,30 @@
     return domain || null;
   }
 
-  // The GDAP API uses a different short-lived token, also in sessionStorage.
+  // The GDAP API uses a different short-lived token. It used to always be in
+  // sessionStorage under CustomerSvcAdminKey, but the page stopped writing it
+  // there — which silently emptied displayNameCache and left every
+  // non-transacted customer showing "Unknown" (see .plan/2.1.1.md). So try the
+  // key first, then the token search-inject.js captured from the page's own
+  // request to the same API. Both are read fresh at call time; neither is
+  // cached to storage.
   function getGdapToken() {
     try {
       const token = sessionStorage.getItem('CustomerSvcAdminKey');
-      if (!token) {
-        dbg('GDAP token FAILED: CustomerSvcAdminKey missing from sessionStorage.');
-        return null;
+      if (token) {
+        dbg('GDAP token OK (sessionStorage). Prefix:', String(token).slice(0, 20));
+        return token;
       }
-      dbg('GDAP token OK. Prefix:', String(token).slice(0, 20));
-      return token;
+      dbg('CustomerSvcAdminKey missing from sessionStorage — trying the bridged token.');
     } catch (e) {
-      dbg('GDAP token FAILED: error reading CustomerSvcAdminKey', e);
-      return null;
+      dbg('GDAP token: error reading CustomerSvcAdminKey', e);
     }
+    if (bridgeGdapToken) {
+      dbg('GDAP token OK (captured from the page request). Prefix:', bridgeGdapToken.slice(0, 12));
+      return bridgeGdapToken;
+    }
+    dbg('GDAP token FAILED: no sessionStorage key, and nothing captured yet.');
+    return null;
   }
 
   function recordDisplayName(out, c) {
@@ -552,17 +596,41 @@
     return Object.keys(out).length ? out : null;
   }
 
+  // A usable GDAP token can arrive *after* loadDomainData() already gave up on
+  // the display-name half: search-inject.js only sees the token when the page
+  // itself calls the API, which may be after document_idle, or not until the
+  // user searches or pages. Fill the missing half in then, rather than leaving
+  // every non-transacted customer on "Unknown" until the next reload.
+  // Skipped while loadState is still 'pending' — the in-flight
+  // loadDomainData() will pick the token up on its own attempt.
+  let recoveringDisplayNames = false;
+  async function maybeRecoverDisplayNames() {
+    if (recoveringDisplayNames || loadState === 'pending' || displayNameMap.size) return;
+    recoveringDisplayNames = true;
+    try {
+      const names = await fetchDisplayNames();
+      if (names && Object.keys(names).length) {
+        displayNameMap = new Map(Object.entries(names));
+        // Names-only write; writeCache leaves the domain half untouched.
+        writeCache(null, names);
+        loadState = 'ready';
+        dbg('Display names recovered via the bridged token:', displayNameMap.size);
+        const g = findGrid(document);
+        if (g && g.shadowRoot) injectColumn(g.shadowRoot);
+      }
+    } finally {
+      recoveringDisplayNames = false;
+    }
+  }
+
   // Populate domainMap + displayNameMap from cache or API. Returns true if we
   // have any data to show. Domains and display names are tracked independently
   // so a prior failed GDAP fetch (empty names) self-heals on the next load
   // instead of staying blank until the 30-day cache expires.
   async function loadDomainData() {
     const cached = await readCache();
-    let domains = cached && cached.domains ? cached.domains : null;
-    let names =
-      cached && cached.displayNames && Object.keys(cached.displayNames).length
-        ? cached.displayNames
-        : null;
+    let domains = cached.domains;
+    let names = cached.displayNames;
     let changed = false;
 
     if (!domains) {
@@ -947,6 +1015,15 @@
       },
       rebuildCache,
       getAltIndex: () => buildAltIndex(),
+      // Booleans only — never expose the token values themselves.
+      getTokenStatus: () => ({
+        authContext: !!sessionStorage.getItem('AuthContextData'),
+        gdapSessionStorage: !!sessionStorage.getItem('CustomerSvcAdminKey'),
+        gdapBridged: !!bridgeGdapToken,
+        loadState,
+        domains: domainMap.size,
+        names: displayNameMap.size,
+      }),
       exportOverrides: () => {
         const obj = {};
         for (const [k, v] of overrideMap) obj[k] = v;
@@ -990,6 +1067,13 @@
     // Push whatever we already know (overrides) to the search interceptor now;
     // domains follow once loadDomainData() resolves below.
     publishAltIndex();
+    // search-inject.js runs at document_start, so it may already have captured
+    // the GDAP token before this script loaded. Ask it to hand it over.
+    try {
+      window.postMessage({ [BRIDGE]: true, kind: 'REQUEST_TOKEN' }, window.location.origin);
+    } catch (e) {
+      dbg('REQUEST_TOKEN post failed:', e);
+    }
 
     // Show the column (with "Loading...") immediately; fill domains in after.
     waitForGrid();

@@ -151,6 +151,14 @@
   <h1 class="page-title">Changelog</h1>
   <p class="subtag">All notable changes to the extension, newest first.</p>
 
+  <h2 id="v2-1-1">Version 2.1.1 <span class="date">10 September 2026</span></h2>
+  <ul>
+    <li>Fixed customers showing <strong>&quot;Unknown&quot;</strong> in the Alternative Name column instead of a name. Partner Center stopped leaving behind the sign-in detail the extension used to look up the fallback name, so no names were loaded at all; the extension now picks that up from the page&#39;s own request instead.</li>
+    <li>Fixed a failed refresh being able to store an <strong>empty</strong> result as if it were valid for 30 days — which left the column stuck on &quot;Unknown&quot; even after reloading the page or using <strong>Rebuild local cache</strong>.</li>
+    <li>Names now appear as soon as they can be loaded, instead of only after a page refresh.</li>
+    <li>Your own custom names were never affected by this and are left untouched.</li>
+  </ul>
+
   <h2 id="v2-1-0">Version 2.1.0 <span class="date">10 August 2026</span></h2>
   <ul>
     <li>Hold <strong>Shift</strong> while clicking a customer's name to get the opposite of your usual link behaviour for just that click (e.g. jump to Admin relationships without changing the "Keep default link behaviour" setting).</li>

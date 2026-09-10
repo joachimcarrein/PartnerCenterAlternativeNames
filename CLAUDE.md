@@ -42,9 +42,9 @@ These were each discovered the hard way; the fixes are load-bearing.
 
 3. **Reading React internals / patching the page's XHR requires the MAIN world.** Isolated-world content scripts can't see the page's JS objects or affect its `fetch`/`XHR`. That's why `search-inject.js` is a separate `"world": "MAIN"` content script. This requires **Chrome 111+**.
 
-4. **Two different Microsoft tokens, both short-lived, both from `sessionStorage`** (placed there by the page). Read them **fresh at call time**, never cache them:
-   - `AuthContextData` → `tokenMetadata.accountsFirstPartyApp.accessToken` — for `api.partnercenter.microsoft.com`.
-   - `CustomerSvcAdminKey` — for `api.partnercustomersecurity.microsoft.com` (GDAP list, used only for the display-name fallback).
+4. **Two different Microsoft tokens, both short-lived.** Read them **fresh at call time**, never cache them to storage:
+   - `AuthContextData` → `tokenMetadata.accountsFirstPartyApp.accessToken` in `sessionStorage` — for `api.partnercenter.microsoft.com`.
+   - For `api.partnercustomersecurity.microsoft.com` (GDAP list, used only for the display-name fallback): `sessionStorage.CustomerSvcAdminKey` **if present**, otherwise the token `search-inject.js` sniffs off the page's own request to that host and hands over the `__altnameBridge` (`kind: 'GDAP_TOKEN'`). **Do not treat the sessionStorage key as reliable** — as of 2.1.1 the page frequently never writes it, and depending on it alone silently emptied `displayNameCache` and showed `Unknown` for every non-transacted customer (see `.plan/2.1.1.md`). The bridge is the load-bearing path now; the key is just a fast path. A token can also arrive *after* `loadDomainData()` has already given up, so `maybeRecoverDisplayNames()` refetches the names half on first receipt.
 
 5. **Displayed value precedence:** user override → Partner Center domain → GDAP `displayName` fallback → `Unknown`/`—`. Some GDAP-only (non-transacted) customers 404 on the Partner Center API and legitimately have no domain; that's what the display-name fallback is for.
 

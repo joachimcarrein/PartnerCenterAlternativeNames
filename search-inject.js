@@ -16,6 +16,12 @@
  * runs with "world": "MAIN" at document_start (before the page issues requests).
  * It can't use chrome.* APIs, so content.js (isolated world) hands it the
  * alt-name index over window.postMessage.
+ *
+ * Second job (since 2.1.1): capture the GDAP bearer token off the page's own
+ * request to TARGET_HOST and hand it to content.js over the same bridge. The
+ * page stopped leaving that token in sessionStorage under CustomerSvcAdminKey,
+ * which silently killed the display-name fallback; sniffing the header we are
+ * already intercepting works regardless of where the page keeps it.
  */
 (() => {
   'use strict';
@@ -38,6 +44,60 @@
   // [tenantId(lowercase), searchableValueLowercased] — supplied by content.js.
   let altIndex = [];
 
+  // Bearer token last seen on an outgoing request to TARGET_HOST, stored
+  // without its "Bearer " prefix to match the shape content.js expects from
+  // sessionStorage. Kept because content.js loads at document_idle and may
+  // miss the page's initial grid request entirely.
+  let gdapToken = null;
+
+  function isTargetUrl(rawUrl) {
+    if (typeof rawUrl !== 'string') return false;
+    try {
+      return new URL(rawUrl, window.location.href).hostname === TARGET_HOST;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  // Handing the token to the isolated world is not a privilege leak: it is the
+  // page's own token, read out of the page's own request, and the postMessage
+  // is pinned to our own origin. Only ever log a short prefix.
+  function publishToken() {
+    if (!gdapToken) return;
+    try {
+      window.postMessage({ [BRIDGE]: true, kind: 'GDAP_TOKEN', payload: gdapToken }, window.location.origin);
+    } catch (e) {
+      dbg('GDAP_TOKEN post failed:', e);
+    }
+  }
+
+  function captureToken(rawValue) {
+    const v = String(rawValue || '').trim();
+    const token = v.replace(/^bearer\s+/i, '');
+    if (!token || token === gdapToken) return;
+    gdapToken = token;
+    dbg('Captured GDAP token from the page request. Prefix:', token.slice(0, 12));
+    publishToken();
+  }
+
+  // Pull an Authorization header out of any of the shapes fetch accepts.
+  function readAuthHeader(h) {
+    if (!h) return null;
+    if (typeof Headers !== 'undefined' && h instanceof Headers) return h.get('Authorization');
+    if (Array.isArray(h)) {
+      for (const pair of h) {
+        if (pair && String(pair[0]).toLowerCase() === 'authorization') return pair[1];
+      }
+      return null;
+    }
+    if (typeof h === 'object') {
+      for (const k of Object.keys(h)) {
+        if (k.toLowerCase() === 'authorization') return h[k];
+      }
+    }
+    return null;
+  }
+
   /* ------------------------------------------------------------------ */
   /* Bridge: receive the alt-name index from the isolated content script */
   /* ------------------------------------------------------------------ */
@@ -48,6 +108,8 @@
       altIndex = e.data.payload;
       dbg('Alt-name index updated:', altIndex.length, 'entries.');
     }
+    // content.js asks on init, in case we captured the token before it loaded.
+    if (e.data.kind === 'REQUEST_TOKEN') publishToken();
   });
 
   // content.js may have loaded first (document_idle vs our document_start) and
@@ -158,7 +220,26 @@
     } catch (e) {
       dbg('XHR open rewrite error:', e);
     }
+    // Remembered so setRequestHeader below knows whether this particular
+    // request is the one whose Authorization header we want.
+    try {
+      this.__altnameIsTarget = isTargetUrl(arguments[1]);
+    } catch (e) {
+      this.__altnameIsTarget = false;
+    }
     return RealOpen.apply(this, arguments);
+  };
+
+  const RealSetHeader = XMLHttpRequest.prototype.setRequestHeader;
+  XMLHttpRequest.prototype.setRequestHeader = function (name, value) {
+    try {
+      if (this.__altnameIsTarget && String(name).toLowerCase() === 'authorization') {
+        captureToken(value);
+      }
+    } catch (e) {
+      dbg('XHR header capture error:', e);
+    }
+    return RealSetHeader.apply(this, arguments);
   };
 
   const realFetch = window.fetch;
@@ -174,6 +255,17 @@
         }
       } catch (e) {
         dbg('fetch rewrite error:', e);
+      }
+      try {
+        const url = typeof input === 'string' ? input : input && input.url;
+        if (isTargetUrl(url)) {
+          // init.headers wins: when supplied it is what actually gets sent.
+          captureToken(
+            readAuthHeader(init && init.headers) || readAuthHeader(input && input.headers)
+          );
+        }
+      } catch (e) {
+        dbg('fetch header capture error:', e);
       }
       return realFetch.call(this, input, init);
     };
