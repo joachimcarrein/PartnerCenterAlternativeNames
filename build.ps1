@@ -4,9 +4,10 @@
 
 .DESCRIPTION
     Chrome extensions here are plain JS with no bundle step, so "building" just
-    means collecting the runtime files (and nothing else — no .git, .plan, or
-    the build script itself) into a zip whose contents sit at the archive root,
-    which is what "Load unpacked" expects and what the Chrome Web Store accepts.
+    means collecting the runtime files (and nothing else — no .git, .plan,
+    tests, or the build script itself) into a zip whose contents sit at the
+    archive root, which is what "Load unpacked" expects and what the Chrome
+    Web Store accepts.
 
     The version is read from manifest.json, so the output name always matches
     the shipped version: dist\partner-center-alternative-names-<version>.zip
@@ -28,8 +29,8 @@ $root = $PSScriptRoot
 Push-Location $root
 try {
     # Files/folders that make up the shipped extension. Anything not listed
-    # here (build.ps1, .plan, .git, README, the docs site pages, etc.) is
-    # intentionally excluded. The icons live under docs/icons so the GitHub
+    # here (build.ps1, .plan, .git, tests, README, the docs site pages, etc.)
+    # is intentionally excluded. The icons live under docs/icons so the GitHub
     # Pages site can reference the same files; the manifest points there too,
     # so the zip must contain them at that same relative path — nothing else
     # from docs/ ships.
