@@ -93,7 +93,7 @@ async function loadContent({ store = {}, session = { auth: true, gdap: true }, f
   const chrome = fakeChrome(store, { onRuntimeMessage: relay });
   const timers = fakeTimers();
   const sandbox = loadIife(
-    'content.js',
+    'src/content.js',
     {
       chrome,
       document: fakeDocument(),

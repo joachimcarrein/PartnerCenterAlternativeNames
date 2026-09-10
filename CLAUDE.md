@@ -20,10 +20,10 @@ Four execution contexts cooperate:
 
 | Context | File | Runs in | Can it use `chrome.*`? |
 |---|---|---|---|
-| Content script | `content.js` | Isolated world (`document_idle`) | Yes |
-| Search interceptor | `search-inject.js` | **MAIN world** (`document_start`) | No |
-| Service worker | `background.js` | Extension worker | Yes — including `chrome.action` (the badge) |
-| Toolbar popup | `popup.html` / `popup.js` | Extension page (`action.default_popup`) | Yes |
+| Content script | `src/content.js` | Isolated world (`document_idle`) | Yes |
+| Search interceptor | `src/search-inject.js` | **MAIN world** (`document_start`) | No |
+| Service worker | `src/background.js` | Extension worker | Yes — including `chrome.action` (the badge) |
+| Toolbar popup | `src/popup.html` / `src/popup.js` | Extension page (`action.default_popup`) | Yes |
 
 Data/flow:
 
@@ -149,7 +149,7 @@ Zero dependencies — `node:test` and `node:assert` are built into Node, so ther
 ./build.ps1   # -> dist/partner-center-alternative-names-<version>.zip
 ```
 
-`build.ps1` packs from an **explicit allowlist** (`manifest.json`, `background.js`, `content.js`, `search-inject.js`, `popup.html`, `popup.js`, `docs/icons/`). Nothing else ships — do not rely on directory sweeps. **Icons deliberately live inside `docs/`** so the GitHub Pages site can reference the same files without a copy; the manifest points at `docs/icons/…` and the build preserves that relative path inside the zip (Chrome is fine with subfolder icon paths). The rest of `docs/` (HTML pages, screenshots) must never ship. Bump `version` in `manifest.json` for each release, **and add a matching entry to `docs/changelog.html` in the same change** (see Repository conventions).
+`build.ps1` packs from an **explicit allowlist** (`manifest.json`, `src/background.js`, `src/content.js`, `src/search-inject.js`, `src/popup.html`, `src/popup.js`, `docs/icons/`). Nothing else ships — do not rely on directory sweeps. **Icons deliberately live inside `docs/`** so the GitHub Pages site can reference the same files without a copy; the manifest points at `docs/icons/…` and the build preserves that relative path inside the zip (Chrome is fine with subfolder icon paths). The rest of `docs/` (HTML pages, screenshots) must never ship. **The runtime code lives in `src/`, but `manifest.json` deliberately stays at the repo root** — Chrome reads the manifest from the root of the folder you load, so moving it into `src/` would both change the unpacked path and put `docs/icons/…` outside the extension root, where the manifest could not reference it at all. Manifest paths are extension-root-relative, which is why they read `src/content.js`; the zip mirrors that same layout. Live-tested: Chrome loads the extension unpacked from the repo root with the code under `src/`, service worker at `src/background.js` included. Bump `version` in `manifest.json` for each release, **and add a matching entry to `docs/changelog.html` in the same change** (see Repository conventions).
 
 ### Releasing
 
@@ -158,9 +158,9 @@ Releases are automatic: **bumping `version` in `manifest.json` and merging to `m
 - **The gate is "does the release exist", not "did the manifest change in this push"** — so the workflow is idempotent and safe to re-run (`workflow_dispatch`), and a squash merge touching the manifest cannot double-publish.
 - **A missing changelog entry fails the release.** `tools/changelog-notes.js` throws when `docs/changelog.html` has no `<h2 id="vX-Y-Z">` for the manifest version, so the "changelog is mandatory" convention below is enforced mechanically rather than remembered. It also refuses an entry with no `<li>` bullets, so an empty release note can never be published.
 - **It runs the suite itself.** `tests.yml` runs on the same push but in a separate workflow whose result `release.yml` cannot see, so without its own test step a red suite would not stop a release.
-- **`windows-latest`, deliberately.** `build.ps1` is portable pwsh, but Windows is where it is developed and verified, the artifact has to load in Chrome, and Windows runner minutes are free on a public repo — there is nothing to buy by risking a differently-built archive. The workflow verifies `manifest.json` and `docs/icons/icon16.png` sit at those exact paths inside the zip, because `Compress-Archive` nesting a wrapper folder (or mangling the separators) would produce a zip Chrome rejects.
+- **`windows-latest`, deliberately.** `build.ps1` is portable pwsh, but Windows is where it is developed and verified, the artifact has to load in Chrome, and Windows runner minutes are free on a public repo — there is nothing to buy by risking a differently-built archive. The workflow verifies `manifest.json`, `src/content.js` and `docs/icons/icon16.png` sit at those exact paths inside the zip, because `Compress-Archive` nesting a wrapper folder (or mangling the separators) would produce a zip Chrome rejects.
 
-To test: load unpacked at `chrome://extensions` (Developer mode). After editing any file, click the extension's **reload (↻)** icon, then refresh the Partner Center page — refreshing the page alone runs the old build.
+To test: load unpacked at `chrome://extensions` (Developer mode) and select the **repo root** — the folder holding `manifest.json`, not `src/`. After editing any file, click the extension's **reload (↻)** icon, then refresh the Partner Center page — refreshing the page alone runs the old build.
 
 ## Repository conventions
 
@@ -180,10 +180,10 @@ To test: load unpacked at `chrome://extensions` (Developer mode). After editing 
 | File | Responsibility |
 |---|---|
 | `manifest.json` | MV3 manifest: `storage` permission, host permissions, two content scripts (isolated + MAIN), background worker, toolbar popup |
-| `content.js` | Column injection, Shadow DOM traversal, data fetch/cache, inline editing, alt-name bridge publisher, cache rebuild, popup message handler, customer-name-click redirect, health record + badge trigger |
-| `search-inject.js` | MAIN-world `$filter` rewriter that makes custom names searchable |
-| `background.js` | `PC_FETCH` relay for authenticated cross-origin API calls, and the tab-scoped `chrome.action` badge (`ALTNAME_HEALTH`) |
-| `popup.html` / `popup.js` | Toolbar popup: degraded-load banner (`assessHealth()`), "Keep default link behaviour" toggle, export/import `nameOverrides` as JSON, trigger a cache rebuild, or clear everything |
+| `src/content.js` | Column injection, Shadow DOM traversal, data fetch/cache, inline editing, alt-name bridge publisher, cache rebuild, popup message handler, customer-name-click redirect, health record + badge trigger |
+| `src/search-inject.js` | MAIN-world `$filter` rewriter that makes custom names searchable |
+| `src/background.js` | `PC_FETCH` relay for authenticated cross-origin API calls, and the tab-scoped `chrome.action` badge (`ALTNAME_HEALTH`) |
+| `src/popup.html` / `src/popup.js` | Toolbar popup: degraded-load banner (`assessHealth()`), "Keep default link behaviour" toggle, export/import `nameOverrides` as JSON, trigger a cache rebuild, or clear everything |
 | `build.ps1` | Packs the runtime files into a versioned zip |
 | `tools/` | CI tooling, never shipped: `changelog-notes.js` turns a `docs/changelog.html` entry into Markdown release notes (`node tools/changelog-notes.js <version>`). Not an IIFE — it is not a shipped file, so it uses a normal `module.exports` |
 | `.github/workflows/` | `tests.yml` (the suite, on PRs and pushes to `main`) and `release.yml` (publishes `v<version>` with the zip when the manifest version is new) |

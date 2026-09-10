@@ -28,7 +28,7 @@ function load(store = {}) {
   const chrome = fakeChrome(store);
   const doc = fakeDocument();
   const sandbox = loadIife(
-    'popup.js',
+    'src/popup.js',
     {
       chrome,
       document: doc,

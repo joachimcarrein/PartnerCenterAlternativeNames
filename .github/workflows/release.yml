@@ -110,7 +110,7 @@ jobs:
           $zip = [System.IO.Compression.ZipFile]::OpenRead((Resolve-Path $zipPath))
           try { $names = $zip.Entries | ForEach-Object { $_.FullName } } finally { $zip.Dispose() }
           Write-Host ($names -join "`n")
-          foreach ($required in @('manifest.json', 'content.js', 'docs/icons/icon16.png')) {
+          foreach ($required in @('manifest.json', 'src/content.js', 'docs/icons/icon16.png')) {
             if ($names -notcontains $required) {
               throw "The zip is missing '$required' at that exact path. Entries: $($names -join ', ')"
             }

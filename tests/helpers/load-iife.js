@@ -47,7 +47,7 @@ function stripIife(src, file) {
 
 /* Load one runtime file into an isolated sandbox.
  *
- *   file    - repo-relative, e.g. 'popup.js'
+ *   file    - repo-relative, e.g. 'src/popup.js'
  *   globals - browser globals the file touches at load time
  *   expose  - JS snippet appended inside the module scope; use it to publish
  *             lexical `const`s onto globalThis, e.g.

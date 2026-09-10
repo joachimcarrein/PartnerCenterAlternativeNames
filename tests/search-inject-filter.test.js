@@ -49,7 +49,7 @@ function load(index = []) {
   const window = fakeWindow();
   const XHR = fakeXhr();
   const sandbox = loadIife(
-    'search-inject.js',
+    'src/search-inject.js',
     { window, XMLHttpRequest: XHR, Headers: undefined, Request: undefined },
     'globalThis.__t = { rewriteUrl, extractQuery, matchingTenantIds, isTargetUrl, readAuthHeader, MAX_CLAUSES, TARGET_HOST };'
   );
